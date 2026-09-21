@@ -103,9 +103,20 @@ describe('the narrated artifact', () => {
         expect(md).toContain(`https://${TENANT}/issue/5f2a1b`)
     })
 
-    test('puts the link ABOVE the field table, where it will be seen', () => {
+    test('puts the link ABOVE anything that restates the payload', () => {
+        /*
+         * This used to name the "What it produced" table, which no longer
+         * exists - the payload's short values are stated on one line now and
+         * the rest is left to the captured JSON. The rule it was protecting is
+         * unchanged: the link is the one thing a reviewer acts on, so nothing
+         * that merely repeats the output may come before it.
+         */
         const md = narrate.narrateStep(step, 'Agent 1 — Intake', { workfrontInstance: TENANT })
-        expect(md.indexOf('**In Workfront**')).toBeLessThan(md.indexOf('**What it produced**'))
+        const link = md.indexOf('**In Workfront**')
+        const restated = md.indexOf('**campaign_name:**')
+        expect(link).toBeGreaterThan(-1)
+        expect(restated).toBeGreaterThan(-1)
+        expect(link).toBeLessThan(restated)
     })
 
     test('names the object and says why there is no link, when no tenant is set', () => {

@@ -191,7 +191,22 @@ function rows (output) {
         // A value the agent openly reports as undetermined is honest, not broken.
         else if (String(value).toLowerCase() === 'undetermined') note = 'undetermined, and says so'
 
-        return { key, value: cell(value), note }
+        /*
+         * IS THIS VALUE READABLE IN PLACE, OR ONLY IN THE JSON?
+         *
+         * A number, a boolean or a short word can be stated in a sentence. An
+         * object, a list or a paragraph cannot - and that is exactly what made
+         * two stages unreadable, with a 300-character identityGap and a
+         * two-sentence statusMessage rendered into single table cells.
+         *
+         * Read off the ORIGINAL value, not off `cell()`, which has already
+         * stringified and truncated it - by then a trimmed object looks like a
+         * short string.
+         */
+        const scalar = (typeof value === 'number' || typeof value === 'boolean') ||
+            (typeof value === 'string' && value.length <= 60 && !/[\r\n]/.test(value))
+
+        return { key, value: cell(value), note, scalar }
     })
 }
 
@@ -284,20 +299,47 @@ function narrateStep (step, label, opts = {}) {
         lines.push('')
     }
 
+    /*
+     * NO TABLE. THE VALUES THAT READ AS A SENTENCE ARE SAID AS ONE.
+     *
+     * This used to render every remaining key as a row of a "What it produced"
+     * table, and on the two stages carrying the most state it was the longest
+     * thing on screen and the least readable. The Architect's came out as
+     * mode / catalog / approval / reviewed / converted / loopCount with two
+     * cells truncated mid-sentence; Tank's put a 300-character identityGap and
+     * a two-sentence statusMessage into single cells.
+     *
+     * Removing the whole block was the first attempt and it went too far: it
+     * took `predictedCount` with it, which is the audience size and the
+     * headline number of the run. So the split is by the SHAPE of the value,
+     * not by which agent produced it. Scalars are stated inline. Objects,
+     * lists and paragraphs are not repeated here at all - they are held
+     * verbatim as JSON on the same run, and a table cell was never able to
+     * show them anyway.
+     */
     const table = rows(step.output)
-    if (table.length) {
-        lines.push('**What it produced**', '')
-        lines.push('| Field | Value | Source |', '|---|---|---|')
-        for (const r of table) lines.push(`| ${r.key} | ${r.value} | ${r.note} |`)
-        lines.push('')
-    }
 
     const flagged = table.filter(r => r.note.startsWith('**'))
+    const readable = table.filter(r => r.scalar && !r.note.startsWith('**'))
+    if (readable.length) {
+        lines.push(readable.map(r => `**${r.key}:** ${r.value}`).join('  ·  '), '')
+    }
     if (flagged.length) {
         lines.push(
             `${flagged.length} of ${table.length} field${table.length === 1 ? '' : 's'} ` +
             `${flagged.length === 1 ? 'is' : 'are'} unset, ambiguous or failed: ` +
             `${flagged.map(f => f.key).join(', ')}.`,
+            ''
+        )
+    }
+
+    const buried = table.filter(r => !r.scalar && !r.note.startsWith('**'))
+    if (buried.length) {
+        // Not "nothing to see": a reviewer who wants these needs to know they
+        // exist and where, or an absent table reads as lost data.
+        lines.push(
+            `It also recorded ${buried.map(r => `\`${r.key}\``).join(', ')} — too long to ` +
+            'restate here, captured verbatim as JSON on this run.',
             ''
         )
     }

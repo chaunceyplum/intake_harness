@@ -691,22 +691,6 @@ nav button .key, nav button .nav-badge { margin-left: auto; }
   </div>
 </div>
 
-<div class="modal-scrim" id="attach">
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="attach-title">
-    <h3 id="attach-title">Attach diagram / image</h3>
-    <p class="sub">For artifacts the AI can&rsquo;t self-serialize (a rendered image, or diagram source
-      it didn&rsquo;t capture). Appends a new artifact to this run.</p>
-    <label class="flabel" for="attach-file">Image file (PNG/JPG/SVG etc.)</label>
-    <input class="field" type="file" id="attach-file" accept="image/*">
-    <label class="flabel" for="attach-source" style="margin-top:10px">…or paste Mermaid / SVG source</label>
-    <textarea class="field" id="attach-source" rows="6" placeholder="graph TD;&#10;  A[Start] --> B[End]"></textarea>
-    <div class="rowbtns" style="margin-top:14px; justify-content:flex-end">
-      <button class="btn" id="attach-cancel">Cancel</button>
-      <button class="btn primary" id="attach-confirm"><i data-lucide="paperclip"></i> Attach</button>
-    </div>
-  </div>
-</div>
-
 <div class="modal-scrim" id="login-gate">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="login-title" style="text-align:center">
     <div class="mark" style="margin:0 auto 12px"><img src="assets/brand-mark.svg" alt="Agent Manager" style="width:30px;height:30px;object-fit:contain"></div>
@@ -2005,8 +1989,6 @@ async function openWorklog (id) {
       </div>
       <div class="meta">${(meta.models_used || []).map(m => modelChip(m)).join('')}${tokenChip(meta.tokens_used)}<span>${(r.steps || []).length} artifact(s)</span><span>updated ${relTime(r.updated)}</span></div>
       <div class="rowbtns">
-        <button class="btn" id="export-replay" data-id="${esc(r.id)}"><i data-lucide="share-2"></i> Export replay skill</button>
-        <button class="btn" id="attach-diagram" data-id="${esc(r.id)}"><i data-lucide="paperclip"></i> Attach diagram/image</button>
         <button class="btn" id="pdf-job"><i data-lucide="file-down"></i> PDF</button>
         ${state.roles.includes('admin') ? `<button class="btn danger" data-delete-job="${esc(r.id)}" data-delete-title="${esc(r.title)}"><i data-lucide="trash-2"></i> Delete</button>` : ''}
       </div>
@@ -2577,9 +2559,6 @@ async function openDetail (id, view) {
     <div class="meta">${(meta.models_used || []).map(m => modelChip(m)).join('')}${tokenChip(meta.tokens_used)}<span>v${meta.version || 1}</span><span>${steps.length} ${r.view} artifact(s)</span></div>
     <div class="rowbtns" style="margin:12px 0;">
       <button class="btn tiny" data-view-toggle="${esc(id)}" data-view="${r.view === 'approved' ? 'full' : 'approved'}"><i data-lucide="eye"></i> ${r.view === 'approved' ? 'Show full log' : 'Show approved only'}</button>
-      <button class="btn tiny" id="export-prompt" data-id="${esc(id)}"><i data-lucide="clipboard-copy"></i> Copy replay prompt</button>
-      <button class="btn tiny" id="download-skill" data-id="${esc(id)}"><i data-lucide="package"></i> SKILL.md</button>
-      <button class="btn tiny" id="attach-diagram" data-id="${esc(id)}"><i data-lucide="paperclip"></i> Attach diagram/image</button>
       <button class="btn tiny" id="pdf-detail"><i data-lucide="file-down"></i> PDF</button>
     </div>
     ${journeyBar(meta, steps)}
@@ -3764,23 +3743,12 @@ async function quietPoll () {
 }
 setInterval(quietPoll, 20000)
 
-/* bake / export / pdf buttons inside worklog + drawer (id-based) */
+/* pdf buttons inside worklog + drawer (id-based) */
 document.addEventListener('click', async (e) => {
-  if (e.target.closest('#export-replay') || e.target.closest('#export-prompt')) { const btn = e.target.closest('#export-replay') || e.target.closest('#export-prompt'); exportReplay(btn.dataset.id, 'prompt') }
-  else if (e.target.closest('#download-skill')) { exportReplay(e.target.closest('#download-skill').dataset.id, 'claude-skill') }
-  else if (e.target.closest('#pdf-job')) { exportPdf($('#worklog-detail'), state.currentJob ? state.currentJob.title : 'job') }
+  if (e.target.closest('#pdf-job')) { exportPdf($('#worklog-detail'), state.currentJob ? state.currentJob.title : 'job') }
   else if (e.target.closest('#pdf-detail')) { exportPdf($('#drawer'), 'job') }
   else if (e.target.closest('#drawer-close')) { closeDrawer() }
-  else if (e.target.closest('#attach-diagram')) { openAttach(e.target.closest('#attach-diagram').dataset.id) }
 })
-async function exportReplay (id, format) {
-  try {
-    const ex = await callTool('export_as_skill', { job_id: id, format })
-    if (format === 'prompt') { navigator.clipboard.writeText(ex.content); toast('Replay prompt copied') }
-    else { downloadText(ex.content, ex.filename || 'SKILL.md'); toast('SKILL.md downloaded') }
-  } catch (e) { banner(e.message) }
-}
-
 /* consent modal (used for job bake-all) */
 let consentCtx = null
 function openConsent (mode, id) {
@@ -3825,44 +3793,6 @@ $('#consent-confirm').addEventListener('click', async () => {
     const id = consentCtx.id; closeConsent(); toast('Run approved and sent to the Oracle'); await reloadLight()
     if (state.currentJob && state.currentJob.id === id) await openWorklog(id)
   } catch (e) { banner(e.message); closeConsent() }
-})
-
-/* attach diagram/image modal (D57/D58) - manual fallback for artifacts the AI can't
-   self-serialize; appends a scoped kind:image or kind:diagram step via the dashboard proxy. */
-let attachCtx = null
-function openAttach (jobId) {
-  attachCtx = { jobId }
-  $('#attach-file').value = ''; $('#attach-source').value = ''
-  $('#attach').classList.add('show'); refreshIcons()
-}
-function closeAttach () { $('#attach').classList.remove('show'); attachCtx = null }
-$('#attach-cancel').addEventListener('click', closeAttach)
-function fileToBase64 (file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(String(reader.result).split(',')[1] || '')
-    reader.onerror = () => reject(new Error('Could not read the file'))
-    reader.readAsDataURL(file)
-  })
-}
-$('#attach-confirm').addEventListener('click', async () => {
-  if (!attachCtx) return
-  const file = $('#attach-file').files[0]
-  const source = $('#attach-source').value.trim()
-  if (!file && !source) { banner('Choose a file to upload, or paste Mermaid/SVG source'); return }
-  try {
-    const jobId = attachCtx.jobId
-    if (file) {
-      const data = await fileToBase64(file)
-      await callTool('append_step', { job_id: jobId, kind: 'image', source: 'dashboard', asset: { data, mime_type: file.type || 'application/octet-stream' } })
-    } else {
-      const format = source.startsWith('<svg') ? 'svg' : 'mermaid'
-      await callTool('append_step', { job_id: jobId, kind: 'diagram', source: 'dashboard', format, content: source })
-    }
-    closeAttach(); toast('Attached'); await reloadLight()
-    if ($('#drawer').classList.contains('show')) await openDetail(jobId)
-    if (state.currentJob && state.currentJob.id === jobId) await openWorklog(jobId)
-  } catch (e) { banner(e.message) }
 })
 
 /* =====================================================================
