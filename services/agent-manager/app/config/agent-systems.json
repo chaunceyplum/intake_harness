@@ -52,26 +52,6 @@
       "mcp_endpoint": "https://cryuy4x9n5.execute-api.us-east-1.amazonaws.com/mcp",
       "mcp_verified": "2026-09-16",
       "input_envelope": "input"
-    },
-    {
-      "id": "aep-agents",
-      "label": "AEP / Real-Time CDP agents",
-      "practice": "aep",
-      "adapter": null,
-      "active": false,
-      "notes": [
-        "Declared so the domain has a home. No executing system yet."
-      ]
-    },
-    {
-      "id": "aem-agents",
-      "label": "AEM agents",
-      "practice": "aem",
-      "adapter": null,
-      "active": false,
-      "notes": [
-        "Declared so the domain has a home. No executing system yet."
-      ]
     }
   ]
 }

@@ -52,11 +52,35 @@ describe('agent-system overrides reach every read path', () => {
         expect(system.base_url).toBe(LOCAL)
     })
 
-    test('an override can activate a system the seed has switched off', () => {
-        const off = agentSystems.list().find(s => !s.active)
-        expect(off).toBeTruthy()
-        const on = [{ id: off.id, active: true, base_url: 'https://example.test', practice: off.practice }]
-        expect(agentSystems.get(off.id, on).active).toBe(true)
+    /*
+     * An admin can bring a system online purely through Settings.
+     *
+     * This used to hunt the seed for "whatever system happens to be inactive"
+     * and switch that on. It passed only because the seed shipped two
+     * placeholder entries - "AEP / Real-Time CDP agents" and "AEM agents",
+     * declared so the domain had a home and never connected to anything - and
+     * it broke the moment those were removed for being build scaffolding
+     * visible on a customer's Agents screen.
+     *
+     * A test should not depend on the product shipping an unconfigured
+     * placeholder. It declares its own now, which is also the real case: a
+     * second harness an admin wires up without a deploy.
+     */
+    test('an override can bring a system online that the seed does not run', () => {
+        const NEW_SYSTEM = 'second-harness'
+        expect(agentSystems.list().some(s => s.id === NEW_SYSTEM)).toBe(false)
+
+        const on = [{ id: NEW_SYSTEM, active: true, base_url: 'https://example.test', practice: 'aep' }]
+        const brought = agentSystems.get(NEW_SYSTEM, on)
+        expect(brought.active).toBe(true)
+        expect(brought.base_url).toBe('https://example.test')
+    })
+
+    test('an override can switch off a system the seed runs', () => {
+        // The other direction, which the seed can still exercise because there
+        // is exactly one active system in it.
+        const off = agentSystems.get('agentic-harness', [{ id: 'agentic-harness', active: false }])
+        expect(off.active).toBe(false)
     })
 
     test('an override can switch a system OFF, and resolve() must stop choosing it', () => {

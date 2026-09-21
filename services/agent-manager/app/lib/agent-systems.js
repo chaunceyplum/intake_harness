@@ -191,11 +191,28 @@ async function discoverAgents (system) {
  * Start a run upstream.
  * @returns {Promise<{upstream_run_id: string, raw: object}>}
  */
-async function startRun (system, input) {
+async function startRun (system, input, fields) {
     // Two shapes in the wild: the payload at the top level, or nested under an
     // envelope key. Config decides, so a second system with a different contract
     // needs no code here.
     const inner = { [system.input_key || 'brief']: input }
+    /*
+     * WHAT THE CALLER ALREADY READ, ALONGSIDE THE WORDS IT READ IT FROM.
+     *
+     * The harness's intake route has accepted `input.fields` since it was
+     * written - `parseBrief(brief, body.input?.fields || {})` - and nothing on
+     * this side ever sent any. So the deterministic parser did all the reading
+     * alone, and the brief's FORMAT decided the outcome: the same Xfinity brief
+     * took ONE round with "Label: value" rows and SEVEN with the tab-separated
+     * table the BU actually copies out of Workfront, because no row matched and
+     * the questionnaire then asked for everything the table already said.
+     *
+     * A marketer reaches this through an AI that has read the table. Asking it
+     * what it read costs nothing and makes the layout irrelevant. The parser
+     * still runs, and still grounds every value against the brief's own words,
+     * so a field the brief does not support is caught rather than trusted.
+     */
+    if (fields && typeof fields === 'object' && Object.keys(fields).length) inner.fields = fields
     const payload = system.input_envelope ? { [system.input_envelope]: inner } : inner
     const body = await request(`${system.base_url}${system.start_path}`, {
         method: 'POST', headers: headers(system), body: JSON.stringify(payload)

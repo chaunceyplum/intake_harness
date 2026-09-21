@@ -368,6 +368,28 @@ h3.head { font-size: 15px; margin-bottom: 4px; }
 .swatch.sq { border-radius: 2px; }
 .swatch.tri { border-radius: 0; clip-path: polygon(50% 0, 100% 100%, 0 100%); }
 .swatch.hex { border-radius: 0; clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%); }
+.swatch.dia { border-radius: 0; clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); }
+/* A GRAPH legend's mark is the node itself, not a colour sample.
+ *
+ * The shape was already matched, but every mark was a solid block of the
+ * BORDER colour, while a node is a pale fill inside that border. So a reader
+ * held a dark green square against a pale green hexagon and had to guess they
+ * were the same thing - and the graphs were reported as not matching their
+ * legends. `.node` draws the mark the way the renderer draws the node: fill
+ * inside line. Plain `.swatch` keeps its solid block, because the Work Log key
+ * below uses it for the colour of a step's edge, which really is only a colour.
+ */
+.swatch.node { background: var(--sw-line); position: relative; }
+.swatch.node::after { content: ''; position: absolute; inset: 2px; border-radius: 1px; background: var(--sw-fill); }
+.swatch.node.dot::after { border-radius: 50%; }
+.swatch.node.tri::after { inset: 0; border-radius: 0; clip-path: polygon(50% 24%, 83% 89%, 17% 89%); }
+.swatch.node.hex::after { inset: 0; border-radius: 0; clip-path: polygon(30% 15%, 70% 15%, 86% 50%, 70% 85%, 30% 85%, 14% 50%); }
+.swatch.node.dia::after { inset: 0; border-radius: 0; clip-path: polygon(50% 19%, 81% 50%, 50% 81%, 19% 50%); }
+/* Steered, and reported-success-while-failing, are not other kinds of node:
+ * they are the same node wearing a thick ring. So the mark is a ring, and the
+ * middle of it is deliberately empty - there is no node colour to claim. */
+.swatch.node.ring { background: transparent; box-shadow: inset 0 0 0 2.5px var(--sw-line); }
+.swatch.node.ring::after { display: none; }
 /* A stage with nothing in it is dimmed, not dropped: the four stages keep a
    stable order, and "0 with the Oracle" is a fact worth being able to read. */
 .legend span.none { opacity: .45; }
@@ -3391,18 +3413,24 @@ async function buildGraph () {
    * with nothing in it is dimmed so the four stages keep their order.
    */
   legend.innerHTML = [
-    ['draft', 'dot', '--exp', 'in progress'],
-    ['ready', 'sq', '--ready', 'ready to approve'],
-    ['awaiting', 'tri', '--baked', 'with the Oracle'],
-    ['incx', 'hex', '--house', 'in the CX Agentic Graph']
+    ['draft', 'dot', 'exp', 'in progress'],
+    ['ready', 'sq', 'ready', 'ready to approve'],
+    ['awaiting', 'tri', 'baked', 'with the Oracle'],
+    ['incx', 'hex', 'house', 'in the CX Agentic Graph']
   ].map(([key, shape, token, label]) =>
     `<span class="${stageCounts[key] ? '' : 'none'}">` +
-    `<span class="swatch ${shape}" style="background:var(${token})"></span><b>${stageCounts[key]}</b> ${label}</span>`
+    `<span class="swatch node ${shape}" style="--sw-fill:var(--${token}-soft); --sw-line:var(--${token})"></span><b>${stageCounts[key]}</b> ${label}</span>`
   ).join('') + [
     [agentArtifacts, `${agentFace('intake', true, 16)} <b>${agentArtifacts}</b> made by an agent`],
-    [personArtifacts, `<span class="swatch dot" style="background:var(--ingredient)"></span><b>${personArtifacts}</b> written by a person`],
-    [faultedCount, `<span class="swatch ring" style="background:var(--reject)"></span><b>${faultedCount}</b> reported success while failing`],
-    [steeredCount, `<span class="swatch ring" style="background:var(--correct)"></span><b>${steeredCount}</b> steered`]
+    [personArtifacts, `<span class="swatch node dot" style="--sw-fill:var(--surface-3); --sw-line:var(--ingredient)"></span><b>${personArtifacts}</b> written by a person`],
+    // The diamonds. Drawn for every run since hubs were added, described
+    // nowhere - so the one shape a reader could not look up was the one
+    // sitting in the middle of the graph joining runs to each other.
+    [Object.keys(kindHub).length, `<span class="swatch node dia" style="--sw-fill:var(--exp-soft); --sw-line:var(--exp)"></span><b>${Object.keys(kindHub).length}</b> kind(s) of record`],
+    [Object.keys(segHub).length, `<span class="swatch node sq" style="--sw-fill:var(--surface-3); --sw-line:var(--ingredient)"></span><b>${Object.keys(segHub).length}</b> level(s) they share`],
+    [Object.keys(tagHub).length, `<span style="color:var(--ingredient); font-weight:600">#tag</span> <b>${Object.keys(tagHub).length}</b> tag(s) they share`],
+    [faultedCount, `<span class="swatch node ring" style="--sw-line:var(--reject)"></span><b>${faultedCount}</b> reported success while failing`],
+    [steeredCount, `<span class="swatch node ring" style="--sw-line:var(--correct)"></span><b>${steeredCount}</b> steered`]
   ].filter(([n]) => n).map(([, html]) => `<span>${html}</span>`).join('')
 
   try {
@@ -3431,10 +3459,19 @@ async function buildCx (rebuild) {
   try { g = rebuild ? (await callTool('rebuild_cx_graph', {}), await callTool('get_cx_graph', {})) : await callTool('get_cx_graph', {}) }
   catch (e) { container.innerHTML = `<div class="empty">Failed: ${esc(e.message)}</div>`; return }
   state.cxGraph = g
-  legend.innerHTML = `<span><span class="swatch" style="background:var(--house)"></span>run</span>` +
+  /*
+   * Every mark here was a solid rounded square. The graph draws a run as a
+   * pale HEXAGON inside a green border, a person's artifact as a hollow
+   * circle, and a steered run as that same hexagon wearing an amber ring -
+   * so three of the four marks named a shape the reader could not find.
+   * Handoffs are triangles and appear only when the graph holds one.
+   */
+  const cxHandoffs = (g.nodes || []).filter(n => n.node === 'handoff').length
+  legend.innerHTML = `<span><span class="swatch node hex" style="--sw-fill:var(--house-soft); --sw-line:var(--house)"></span>run</span>` +
     `<span>${agentFace('intake', true, 18)} an agent&rsquo;s artifact</span>` +
-    `<span><span class="swatch" style="background:var(--ingredient)"></span>written by a person</span>` +
-    `<span><span class="swatch ring" style="background:var(--correct)"></span>steered</span>`
+    `<span><span class="swatch node dot" style="--sw-fill:var(--surface-3); --sw-line:var(--ingredient)"></span>written by a person</span>` +
+    (cxHandoffs ? `<span><span class="swatch node tri" style="--sw-fill:var(--baked-soft); --sw-line:var(--baked)"></span>a handoff</span>` : '') +
+    `<span><span class="swatch node ring" style="--sw-line:var(--correct)"></span>steered</span>`
   sub.innerHTML = g.built === false || !g.generated_at
     ? 'Shared, approved knowledge across every owner. Nothing admitted yet: bake a job, then have a Oracle admit it.'
     : `Cross-owner, <b>approved-only</b>. ${g.job_count} run(s) · ${g.node_count} node(s) · ${g.edge_count} edge(s) · ${g.owners.length} owner(s). Generated ${relTime(g.generated_at)}. Drag a node; hover to trace its connections.`

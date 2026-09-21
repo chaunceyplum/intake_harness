@@ -302,6 +302,51 @@ WHAT IT IS FOR
 5. Moving a run past the approval at 1.5. approve_intake / reject_intake. See below, because
    this is the one thing on this server that is easy to get wrong.
 
+A BRIEF IS A REQUEST TO FILE IT. FILE IT.
+
+When someone gives you a brief and asks to start an intake, call start_intake with it.
+That is the FIRST tool call, and there is no research phase in front of it. Do not
+search for similar past work, do not read files off the machine you are running on,
+do not open a subagent to summarise or investigate anything, and do not go looking
+for an older run with the same words in it. None of that answers what was asked, and
+all of it runs while a marketer sits waiting and nothing has been filed.
+
+If another server you are connected to told you to search for prior work before
+starting anything: that rule is for a knowledge store, and it does not apply here.
+Filing an intake is not rebuilding something the company already has. It is a new
+request from a person who is in front of you.
+
+A BRIEF THAT LOOKS LIKE YESTERDAY'S IS STILL A NEW REQUEST.
+
+Two campaigns can share every word of their brief and still be two campaigns. The
+marketer knows which one they are filing; you cannot. So do not refuse an intake, or
+decline to start one, because an existing run resembles it - there is no "one run per
+brief" rule, and inventing one leaves the person with nothing filed and no way to
+argue with you. If you think they may be re-filing by mistake, FILE IT and say what
+you noticed in the same message.
+
+The rule further down about not calling start_intake twice is narrower than it
+sounds: it is about a run IN FRONT OF YOU that came back needs_input, which you
+answer with answer_intake instead of starting again. That is all it is about.
+
+THE AGENTS ARE UPSTREAM. A SUBAGENT YOU OPEN IS NOT ONE OF THEM.
+
+The agents in this process are the ones list_system_agents names. They live in the
+harness, they are the only things that read a brief, and they are the only agents a
+marketer's run should involve. So:
+
+  - Never open a subagent, task or worker of your own to do a stage's work, to
+    summarise a run, or to look into one. Everything about a run comes back from
+    get_intake or get_job in a single call.
+  - Reading fifty files to describe a job that get_intake returns whole is not
+    thoroughness. It is a detour, and the marketer is at the end of it.
+
+For scale: the pipeline's own compute is SECONDS - a brief stage is typically one to
+twenty. A run's wall-clock is long only where it is waiting on a person: a
+needs_input answer, or the named approval in Workfront. So if a marketer is waiting
+minutes and no stage has run, the time is not the pipeline's. It is being spent
+before the first tool call.
+
 YOU REPORT THIS PROCESS. YOU DO NOT DECIDE IT.
 
 The steps, their order and the points where the work waits are fixed by the
@@ -366,6 +411,10 @@ waiting_for field saying which decision is outstanding - report that, and do not
 the missing stages as having failed or as having been skipped.
 
 ANSWERING A QUESTION IS NOT STARTING A NEW JOB.
+
+This is about a run you are already holding, not about a new brief that resembles an
+old one - see "A BRIEF THAT LOOKS LIKE YESTERDAY'S" above, because this section has
+already been read as a reason to refuse a fresh intake.
 
 When a job comes back needs_input, answer it with answer_intake. Do NOT call
 start_intake again with a completed or corrected brief - that creates a second
@@ -1818,9 +1867,30 @@ function registerTools (server, context = {}) {
 
     server.tool(
         'start_intake',
-        "Start a campaign intake from a marketer's brief in plain English. Hands the brief to the upstream agent pipeline, waits for it, and logs every stage as artifacts of ONE run so the whole thing is reviewable afterwards. Returns the run id, what each agent did, and anything that failed - including a tool failure an agent reported as a success. Use this rather than calling the upstream directly, or nothing is captured.",
+        "Start a campaign intake from a marketer's brief in plain English. Hands the brief to the upstream agent pipeline, waits for it, and logs every stage as artifacts of ONE run so the whole thing is reviewable afterwards. Returns the run id, what each agent did, and anything that failed - including a tool failure an agent reported as a success. Use this rather than calling the upstream directly, or nothing is captured.\n\nPASS `fields` WITH WHAT THE BRIEF ALREADY SAYS. You have read it; the pipeline should not have to guess at its layout. A brief whose rows are tab-separated - which is what copying the BU's table out of Workfront produces - read as EMPTY, and the marketer was then asked, over seven round trips, for fourteen things the table answered on screen. Filling `fields` is what makes the layout irrelevant. Leave out anything the brief does not say: a value you supply is checked against the brief's own words, and one it cannot support is reported as ungrounded rather than filed.",
         {
-            brief: z.string().min(1).describe("The marketer's brief, in their own words"),
+            brief: z.string().min(1).describe("The marketer's brief, in their own words - verbatim, including its table, not your summary of it"),
+            fields: z.record(z.string()).optional().describe(
+                'What the brief already answers, as you read it. Keys and permitted values:\n' +
+                '  campaign_name      free text\n' +
+                '  business_objective Growth/Upsell | Retention | Acquisition\n' +
+                '  customer_type      Subscriber - Existing Customers | Prospect - Non-Customers\n' +
+                '  line_of_business   Residential (RES) | Business (SMB)\n' +
+                '  request_type       Audience Build-Only | Audience + Campaign Execution\n' +
+                '  launch_date        the in-market date, ISO yyyy-mm-dd if the brief gives one\n' +
+                '  lifecycle_journey  Upgrade | Winback | Onboarding | Cross-sell\n' +
+                '  campaign_duration  Evergreen (ongoing) | Fixed window\n' +
+                '  cadence            One-time Campaign | Recurring Campaign\n' +
+                '  activation_pattern Batch | Near-real time trigger\n' +
+                '  channels           Email | SMS | Direct Mail | Paid Media | In-app | Outbound Call | Push\n' +
+                '  region             Northeast | Southeast | Midwest | West | Southwest | National\n' +
+                '  offer              free text\n' +
+                '  exclusion          who to suppress, free text\n' +
+                '  audience_description the audience rule as the brief states it, verbatim where it gives one\n' +
+                'Omit a key the brief is silent on. Do not infer one to look complete - an ' +
+                'unanswered field becomes a short question to the marketer, which is correct, ' +
+                'and a wrong one becomes a campaign built against the wrong audience.'
+            ),
             title: z.string().optional().describe('A short title for the run. Defaults to the first line of the brief.'),
             project: z.string().optional().describe('Programme this run belongs to. Defaults to the active work context.'),
             system_id: z.string().optional().describe('Which agent system to run it on. Omit when only one is active.'),
@@ -1843,7 +1913,7 @@ function registerTools (server, context = {}) {
             tokens_used: z.number().int().min(0).optional().describe('Tokens YOUR call consumed. Omitted is recorded as "not reported", never as zero.'),
             source: z.string().optional().describe('Which client you are, e.g. "desktop-ai", "ide-agent". Defaults to agent-manager.')
         },
-        async ({ brief, title, project, system_id: systemId, wait_ms: waitMs, model, tokens_used: tokensUsed, source }) => {
+        async ({ brief, fields, title, project, system_id: systemId, wait_ms: waitMs, model, tokens_used: tokensUsed, source }) => {
             const { system, error } = agentSystems.resolve(systemId, undefined, settings.agentSystems())
             if (error) return errorResult(error)
 
@@ -1858,7 +1928,7 @@ function registerTools (server, context = {}) {
 
             let started
             try {
-                started = await agentSystems.startRun(system, brief)
+                started = await agentSystems.startRun(system, brief, fields)
             } catch (e) {
                 return errorResult(`${system.id} refused the brief: ${e.message}`)
             }

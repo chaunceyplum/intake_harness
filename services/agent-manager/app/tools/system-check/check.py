@@ -256,13 +256,28 @@ def check_gateway(c):
         return
 
     servers = data.get("servers") or []
-    lines, bad = [], []
+
+    # A SERVER THE DEMO DOES NOT USE MUST NOT BE ABLE TO FAIL THE DEMO.
+    #
+    # This failed the whole verdict on ANY registered server with no tools.
+    # `workfront-inhouse` is registered and its route has never been deployed
+    # at that gateway - it has answered 404 every time it has been asked - so
+    # "is the demo ready" came back NOT READY on a perfectly good day. That is
+    # the fastest possible way to teach somebody to stop reading this output,
+    # and then the one real red goes past unnoticed too.
+    #
+    # EXPECTED_SERVERS is the set the demo actually depends on. Those still
+    # FAIL, on an error, on zero tools, on a count that has collapsed, and on
+    # being absent altogether. Anything else WARNS and is named, because a dead
+    # registration is worth removing and is not worth stopping for.
+    lines, bad, stale = [], [], []
     for s in servers:
         sid, n, e = s.get("id"), s.get("tool_count") or 0, s.get("error")
         lines.append("%s: %s tools%s" % (sid, n, " - %s" % e if e else ""))
+        expected = sid in EXPECTED_SERVERS
         floor = EXPECTED_SERVERS.get(sid)
         if e or n == 0:
-            bad.append("%s (%s)" % (sid, e or "no tools"))
+            (bad if expected else stale).append("%s (%s)" % (sid, e or "no tools"))
         elif floor and n < floor:
             bad.append("%s only %d tools, expected about %d" % (sid, n, floor))
     for sid in EXPECTED_SERVERS:
@@ -270,13 +285,22 @@ def check_gateway(c):
             bad.append("%s is not registered at all" % sid)
 
     c.evidence = " | ".join(lines) or "no servers"
+    live = [s for s in servers if (s.get("tool_count") or 0) > 0]
     if bad:
         c.state, c.detail = FAIL, "Gateway problem: " + "; ".join(bad)
         c.fix = ("Usually an expired Adobe token. Open Settings in the dashboard "
                  "and re-authenticate the affected server, then re-run this.")
+    elif stale:
+        c.state = WARN
+        c.detail = ("The servers the demo needs are connected. Dead registration: "
+                    + "; ".join(stale))
+        c.fix = ("Nothing here blocks a demo - no agent calls these. Either deploy "
+                 "the route or remove the server in Settings, so this line stops "
+                 "appearing and a real failure stands out.")
     else:
         c.state = OK
-        c.detail = "All %d MCP server(s) connected, tools listing - so the Adobe tokens are live." % len(servers)
+        c.detail = ("All %d MCP server(s) connected, tools listing - so the Adobe tokens are live."
+                    % len(live))
 
 
 def check_runs_health(c):
