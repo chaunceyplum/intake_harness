@@ -51,16 +51,18 @@ import {
  *   B6 (3.3)  the nightly job runs at 21:45 and every cycle after it costs a
  *             full day, so validate and predict BEFORE the cutoff.
  *
- * STILL READ-ONLY, DELIBERATELY - even with activation added. Everything
- * here is an AEP read, including activation: it will report that it cannot
+ * MOSTLY READ-ONLY, with activation as the deliberate exception. The
+ * build/probe side is still all reads: it will report that it cannot
  * predict a count rather than create a segment definition to produce one
- * (lib/agents/audience/aep.ts), and it will report whether an audience is
- * already wired to a named destination rather than write that wiring itself
- * (lib/agents/audience/activation.ts) - the tools available genuinely have
- * no safe way to add a segment to an existing destination's dataflow
- * without risking every other segment already activated there, so this
- * reports that rather than guessing. A number, or an activation, obtained
- * by silently writing to a client's sandbox is not worth having.
+ * (lib/agents/audience/aep.ts). Activation, however, does now WRITE when a
+ * destination is explicitly named (lib/agents/audience/activation.ts): it
+ * adds the audience to an existing destination dataflow in place via
+ * destination_update_dataflow_audiences (add-only, so nothing else already
+ * activated there is disturbed), or creates a first dataflow when the
+ * destination has none. It still only ever ADDS its own segment and never
+ * removes another, and it still declines rather than guess when it cannot
+ * ground the destination - an activation obtained by silently clobbering a
+ * client's other wiring is not worth having.
  *
  * ACTIVATION IS OFF BY DEFAULT. Nothing below changes unless intake's own
  * `destination` field (or, for older runs, the brief's free text) names a
@@ -127,6 +129,10 @@ function formatActivationMessage(activation: ActivationOutcome): string {
       return `Created a new dataflow to "${activation.destinationName}" (${activation.dataflowId}) and activated this audience to it.`;
     case "create_failed":
       return `Could not create a dataflow to "${activation.destinationName}": ${activation.reason}`;
+    case "activated_existing":
+      return `Activated this audience to the existing dataflow for "${activation.destinationName}" (${activation.dataflowId}).`;
+    case "activate_existing_failed":
+      return `Could not add this audience to the existing dataflow for "${activation.destinationName}" (${activation.dataflowId}): ${activation.reason}`;
     case "lookup_failed":
       return `Could not verify activation status for "${activation.destinationName}": ${activation.reason}`;
   }

@@ -15,22 +15,29 @@
  * each carrying its own `segment_selectors`: the actual list of segments
  * activated to it. Re-verified 21 Sep 2026, schemas unchanged:
  *
- * 1. There is STILL no tool that ADDS a segment to an EXISTING dataflow's
- *    selectors. destination_update_dataflow only supports renaming and
- *    rescheduling - its schema has no segment_selectors field at all. So
- *    this never attempts to MERGE a segment into a dataflow that already has
- *    other segments wired to it - doing so would mean either duplicating the
- *    dataflow's config or silently dropping everything it already activates.
+ * 1. UPDATED 21 Sep 2026: there IS now a tool that adds a segment to an
+ *    EXISTING dataflow - destination_update_dataflow_audiences, taking
+ *    add_audience_ids / remove_audience_ids (JSON-array strings of segment
+ *    IDs) against a flow_id. This supersedes the earlier note here, which
+ *    said no such tool existed and that the only option was a duplicate
+ *    dataflow. When a dataflow already exists for the destination but does
+ *    not carry this segment, activateIntoExistingDataflow now ADDS the
+ *    segment to that dataflow in place (add_audience_ids only - it never
+ *    removes, so every other audience already activated on that dataflow is
+ *    left exactly as it was, which was the whole reason the merge used to be
+ *    considered unsafe). Plain destination_update_dataflow (rename/reschedule
+ *    only, no audience field) still can't do this and is still unused.
  *
  * 2. What that means in practice, as of 21 Sep 2026 (explicit product
  *    direction): whenever this segment isn't already active at the named
- *    destination - whether that destination has NO dataflow yet, or has one
- *    that simply doesn't carry this segment - this creates an ADDITIONAL,
- *    NEW dataflow for it, rather than reporting the case for a human to wire
- *    up manually. Both starting points are the same safe shape (a pure
- *    addition, nothing existing to clobber), so they share one code path.
- *    Getting there needs a real chain, verified live against "chaunceys
- *    custom dest" (a real, working dataflow on this tenant):
+ *    destination there are now TWO distinct paths, not one -
+ *      - the destination already has a dataflow that just doesn't carry this
+ *        segment -> add the segment to THAT dataflow in place
+ *        (destination_update_dataflow_audiences); nothing new is created.
+ *      - the destination has NO dataflow yet -> create an additional, NEW
+ *        dataflow for it. This still needs a real chain, verified live
+ *        against "chaunceys custom dest" (a real, working dataflow on this
+ *        tenant):
  *      target connection (by name) --connection_spec_id-->
  *      flow spec (flow_list_flow_specs, matched by targetConnectionSpecIds)
  *      --flow_spec_id + sourceConnectionSpecIds-->
@@ -364,6 +371,16 @@ export type ActivationOutcome =
   | { status: "created"; destinationName: string; dataflowId: string }
   | { status: "create_failed"; destinationName: string; reason: string }
   /**
+   * The segment was ADDED to a dataflow that already existed for this
+   * destination (destination_update_dataflow_audiences, add_audience_ids) -
+   * an in-place activation, distinct from "created" (a brand-new dataflow).
+   * This is the path that used to be impossible; see this file's docstring
+   * point 1/2.
+   */
+  | { status: "activated_existing"; destinationName: string; dataflowId: string }
+  /** The in-place add to an existing dataflow was attempted but failed. */
+  | { status: "activate_existing_failed"; destinationName: string; dataflowId: string; reason: string }
+  /**
    * The dataflow read itself failed (network/MCP error) - distinct from a
    * CONFIRMED absence (destination_not_found, where the read succeeded and
    * genuinely found nothing). Reported honestly rather than treated as "no
@@ -372,6 +389,36 @@ export type ActivationOutcome =
    * destination that may already have one.
    */
   | { status: "lookup_failed"; destinationName: string; reason: string };
+
+/**
+ * Add a segment to an EXISTING dataflow's activated audiences in place, via
+ * destination_update_dataflow_audiences. add_audience_ids is a JSON-array
+ * STRING of segment IDs (the tool's own schema) - and we only ever pass
+ * add_audience_ids, never remove_audience_ids, so nothing already activated
+ * on this dataflow is disturbed. This is the correct in-place activation
+ * that superseded the old duplicate-dataflow workaround (see this file's
+ * docstring point 1).
+ */
+async function activateIntoExistingDataflow(
+  taskId: TaskId,
+  dataflow: DataflowRecord,
+  segmentId: string,
+): Promise<ActivationOutcome> {
+  try {
+    await callMcpTool<Record<string, unknown>>(taskId, "destination_update_dataflow_audiences", {
+      flow_id: dataflow.id,
+      add_audience_ids: JSON.stringify([segmentId]),
+    });
+    return { status: "activated_existing", destinationName: dataflow.name, dataflowId: dataflow.id };
+  } catch (err) {
+    return {
+      status: "activate_existing_failed",
+      destinationName: dataflow.name,
+      dataflowId: dataflow.id,
+      reason: (err as Error).message,
+    };
+  }
+}
 
 /**
  * The activation decision, given a segment findExistingSegment already
@@ -415,13 +462,17 @@ export async function activateAudience(
   if (match.dataflow && selectorsIncludeSegment(match.dataflow.segmentSelectors, args.segmentId)) {
     return { status: "already_active", destinationName: match.dataflow.name, dataflowId: match.dataflow.id };
   }
-  // Either no dataflow matched this destination by name, or one did but
-  // doesn't carry this segment (match.dataflow set, selectors checked above
-  // and didn't include it) - both are the same safe shape from here: a pure
-  // addition, nothing existing to clobber. The destination might still exist
-  // as a target connection, which is what makes creating a (new, additional)
-  // dataflow possible. See this file's docstring point 2 for why this never
-  // tries to merge into match.dataflow instead.
+  // A dataflow already exists for this destination but doesn't carry this
+  // segment: ADD the segment to it in place, rather than minting a second
+  // dataflow (what this used to do, before the tool below existed - see this
+  // file's docstring point 1/2). add_audience_ids only, so every other
+  // audience already activated on this dataflow is left untouched.
+  if (match.dataflow) {
+    return activateIntoExistingDataflow(taskId, match.dataflow, args.segmentId);
+  }
+  // No dataflow matched this destination by name at all. The destination
+  // might still exist as a target connection, which is what makes creating a
+  // (new, first) dataflow possible.
   const targetMatch = await findTargetConnection(taskId, args.destinationName);
   if (!targetMatch.match) {
     return {

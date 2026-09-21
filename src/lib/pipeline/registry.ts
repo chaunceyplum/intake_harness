@@ -191,20 +191,33 @@ export const PIPELINE: AgentDefinition[] = [
       "adobe_get_field_group",
       // Explicit, on-command activation ONLY (see agents/audience/
       // activation.ts) - checking whether an audience is already wired to a
-      // named destination's dataflow, and creating a NEW dataflow whenever
-      // it isn't: whether no dataflow exists yet for that destination, or
-      // one does but doesn't carry this segment (21 Sep 2026, explicit
-      // product direction - see activation.ts's docstring). Still no
-      // destination_update_dataflow (it has no segment_selectors field at
-      // all - there genuinely is no safe way to ADD a segment to a dataflow
-      // that already has other segments wired to it), so this never merges
-      // into an existing dataflow - only ever creates an additional one.
+      // named destination's dataflow, and activating it when it isn't. Two
+      // shapes, and as of 21 Sep 2026 they are now DIFFERENT writes:
+      //   - a dataflow ALREADY EXISTS for the destination but doesn't carry
+      //     this segment -> ADD the segment to that dataflow's activated
+      //     audiences via destination_update_dataflow_audiences (below). This
+      //     is the correct, in-place activation, and it is only possible now
+      //     that the tool exists - the older note here said it didn't and
+      //     that this case had to mint a duplicate dataflow instead. It does
+      //     not.
+      //   - NO dataflow exists yet for the destination -> create one with
+      //     destination_create_dataflow (the full target-connection ->
+      //     flow-spec -> proven-source chain, see activation.ts).
+      // destination_update_dataflow_audiences takes add_audience_ids /
+      // remove_audience_ids (JSON-array strings of segment IDs) against a
+      // flow_id - verified against the live tool's own inputSchema, not
+      // guessed. Agent 3 only ever ADDS (never removes) here, so an existing
+      // dataflow's other activated audiences are left untouched - the exact
+      // safety concern that used to force the duplicate-dataflow workaround.
+      // Plain destination_update_dataflow (rename/reschedule only, no
+      // audience field) is still NOT granted - it can't activate anything.
       "destination_list_dataflows",
       "destination_get_dataflow",
       "destination_list_target_connections",
       "destination_get_target_connection",
       "flow_list_flow_specs",
       "destination_create_dataflow",
+      "destination_update_dataflow_audiences",
       // The orchestrator posts a "what this agent did" comment back onto the
       // Workfront issue after EVERY step completes (see
       // lib/pipeline/workfront-updates.ts), and it posts AS the completing
