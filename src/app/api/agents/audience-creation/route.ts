@@ -397,7 +397,9 @@ async function handlePost(req: NextRequest) {
 
     const statusMessage = [
       reusingExisting
-        ? `Reusing existing audience "${existing.name}" - no build needed, so the FAC-vs-rule-builder decision does not apply here.`
+        ? `Reusing existing audience "${existing.name}" (matched on: ${existing.matchedTerms.join(", ")} - ` +
+          "verify this is really the same audience before trusting the activation below) - no build needed, " +
+          "so the FAC-vs-rule-builder decision does not apply here."
         : existing.read
           ? `No existing audience matched (${existing.considered} checked).`
           : `Could not list existing audiences: ${existing.error}.`,
@@ -496,7 +498,9 @@ async function handlePost(req: NextRequest) {
         attributesNeeded: needed,
         attributesMissing: missing,
         schemaEvidence: probe.evidence,
-        existingSegment: existing.id ? { id: existing.id, name: existing.name } : null,
+        existingSegment: existing.id
+          ? { id: existing.id, name: existing.name, score: existing.score, matchedTerms: existing.matchedTerms }
+          : null,
         // B7's request-age metric, now real wall-clock seconds off the
         // durable attribute_requests row (null when nothing is open).
         requestAgeSeconds: attrState.ageSeconds,

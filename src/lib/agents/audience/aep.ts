@@ -38,6 +38,7 @@
 
 import { callMcpTool } from "@/lib/mcp-client";
 import type { TaskId } from "@/lib/pipeline/types";
+import { CAMPAIGN_BRIEF_FIELDS } from "@/lib/agents/shared/campaign-brief";
 
 /**
  * Attributes we can recognise, matched against SCHEMA FIELD NAMES.
@@ -70,13 +71,71 @@ export const ATTRIBUTE_CUES: Record<string, RegExp> = {
   // ECID/identity presence - distinct from "channels", which is about WHICH
   // channel to send on, not whether an identity attribute exists on the
   // profile to target against.
-  identity: /(^|[^a-z])(ecid|mcid|experience\s?cloud\s?id|identitymap|identity_map)([^a-z]|$)/i,
+  //
+  // personid/person_id ADDED 21 Sep 2026 - a real brief asked for "an
+  // audience where personId exists" and this cue never fired, because
+  // neither "personid" nor any synonym of it was in the regex. neededAttributes
+  // came back empty, probeSchemas short-circuited with a vacuous "conclusive,
+  // 0 checked" (see its own docstring/early-return), and the run silently
+  // reused an unrelated existing segment instead. This is not a guess at an
+  // unverified field name: "personId" is added as BRIEF-TEXT vocabulary for
+  // the SAME concept this cue already covers (does an identity attribute
+  // exist on the profile), so it is checked against the same already-grounded
+  // schema evidence (identityMap, ecid, ...) - a real XDM profile schema
+  // structurally carries identityMap, so this cue firing on "personId" text
+  // resolves against a field that is actually there, not an invented one.
+  //
+  // GENERALIZED 21 Sep 2026 - personId was one example of a broader gap:
+  // ANY identifier concept ("device id", "loyalty ID", "account GUID",
+  // "session UUID", ...) hit the same "never recognized, vacuous pass"
+  // failure. Added, word-boundary anchored exactly like every other cue
+  // here (never an unanchored substring - see this const's own docstring
+  // on "lob" matching inside "glob"):
+  //   - id/ids/guid/uuid as STANDALONE words ("device ID", "a GUID") - safe
+  //     because (^|[^a-z])...([^a-z]|$) requires "id" to be its own token,
+  //     which does NOT match inside an ordinary word that happens to END in
+  //     "-id" (avoid, valid, solid, rapid, hybrid, ... all fail this, since
+  //     there is no non-letter character between the rest of the word and
+  //     "id" - verified in aep.test.ts).
+  //   - _id/_guid/_uuid as a snake_case suffix ("device_id") - the
+  //     underscore itself satisfies the [^a-z] boundary, so this needs no
+  //     special casing.
+  //   - emailaddress/phonenumber/etc., duplicated from the `channels` cue's
+  //     literals rather than a bare "email"/"phone" - AEP's identity graph
+  //     genuinely treats Email/Phone as identity namespaces, so a compound
+  //     field-name mention is real identity evidence. A BARE "email"/"phone"
+  //     is deliberately still excluded here, for the exact reason the
+  //     `channels` cue below stays narrow: a marketer saying "send this via
+  //     email" means pick a channel, not "check whether an email identifier
+  //     exists" - conflating the two re-triggers the GTO over-ask bug this
+  //     file's neededAttributes docstring already fixed once.
+  // CAMELCASE FIELD NAMES (deviceId, loyaltyId, sessionId, accountGuid) are
+  // NOT reachable by this regex - case-insensitive matching can't tell
+  // "deviceId" from the ordinary English word "valid" once folded to
+  // lowercase. See IDENTIFIER_FIELD_SUFFIX below, applied only to real
+  // schema field names in probeSchemas, where case is trustworthy.
+  identity:
+    /(^|[^a-z])(ecid|mcid|experience\s?cloud\s?id|identitymap|identity_map|personid|person_id|ids?|guid|uuid|emailaddress|email_address|phonenumber|phone_number|mobilephone)([^a-z]|$)/i,
   // Product/service ownership - xfinitytv/xfinityinternet/xfinitymobile are
   // real field names in this tenant (see docstring above); internet/tv/
   // broadband/television cover briefs that describe the same thing by the
   // product's common name rather than the schema's field name.
   product_ownership: /(^|[^a-z])(xfinitytv|xfinityinternet|xfinitymobile|broadband|television|\btv\b|\binternet\b)([^a-z]|$)/i,
 };
+
+/**
+ * The "identity" cue's camelCase companion, used ONLY against real schema
+ * FIELD NAMES (probeSchemas), never against brief text - see ATTRIBUTE_CUES.identity's
+ * docstring for why. Case-SENSITIVE on purpose: a lowercase letter directly
+ * followed by "Id"/"Guid"/"Uuid", not immediately followed by another letter
+ * (so "deviceId" and "accountGuid" match, but "identityMap" - "Id" at the
+ * very START with nothing lowercase before it - and "userGuideline" - more
+ * letters immediately after "Guid" - do not). This is exactly the "lob in
+ * glob" discipline every other cue in this file already applies, just
+ * case-sensitive because camelCase is itself the boundary signal here, and
+ * that signal disappears the moment the match is folded to lowercase.
+ */
+export const IDENTIFIER_FIELD_SUFFIX = /[a-z](Id|Guid|Uuid)(?![a-zA-Z])/;
 
 /**
  * Which AEP profile attributes THIS audience's own criteria actually
@@ -127,6 +186,46 @@ const REQUEST_STOPWORDS = new Set([
 ]);
 
 /**
+ * Campaign-shape vocabulary that can never distinguish one audience from
+ * another, so it must never by itself count as evidence that two audiences
+ * are "the same": [1] any CAMPAIGN_BRIEF_FIELDS option that is the ONLY
+ * allowed value for its field (every request in this pipeline carries the
+ * identical word - e.g. every audience_build_method is literally "Simple
+ * Workflow Audience" - so it is boilerplate, not audience-defining text),
+ * and [2] the fields in MOTION_FIELD_KEYS - campaign-SHAPE categories
+ * ("Upsell", "Retention", "Winback", "Evergreen", "Batch", ...) shared by
+ * countless unrelated audiences, unlike region/line_of_business/
+ * customer_type/channels (left out of MOTION_FIELD_KEYS on purpose -
+ * those genuinely describe WHO the audience is, not how the campaign runs).
+ *
+ * Derived from CAMPAIGN_BRIEF_FIELDS itself, not a hand-maintained word
+ * list, so it can't drift from the form's real options the way two copies
+ * of the same list would.
+ *
+ * THE BUG THIS FIXES: a brief for "people who have a personId" was matched
+ * to an unrelated, already-built "Michigan TV-Only Internet Upsell" segment
+ * on the strength of ONE shared word - "upsell" - which is business_objective
+ * vocabulary common to countless real audiences, not anything that
+ * described the actual criteria. See findExistingSegment's confidence gate
+ * for the other half of this fix.
+ */
+const MOTION_FIELD_KEYS = new Set([
+  "business_objective", "lifecycle_journey", "campaign_duration", "cadence",
+  "activation_pattern", "request_type", "request_category", "promo_channel_type",
+]);
+const CATEGORICAL_STOPWORDS: ReadonlySet<string> = new Set(
+  CAMPAIGN_BRIEF_FIELDS.filter((f) => (f.options?.length ?? 0) === 1 || MOTION_FIELD_KEYS.has(f.key))
+    .flatMap((f) => f.options ?? [])
+    .flatMap((opt) =>
+      opt
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, " ")
+        .split(/\s+/)
+        .filter((w) => w.length > 3),
+    ),
+);
+
+/**
  * Meaningful, distinctive words from a brief/audience description - the
  * vocabulary an existing, already-built segment's own NAME is likely to
  * share if it really is the same audience. See findExistingSegment's
@@ -139,7 +238,7 @@ export function criteriaKeywords(text: string): string[] {
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ")
     .split(/\s+/)
-    .filter((w) => w.length > 3 && !REQUEST_STOPWORDS.has(w));
+    .filter((w) => w.length > 3 && !REQUEST_STOPWORDS.has(w) && !CATEGORICAL_STOPWORDS.has(w));
   return [...new Set(words)];
 }
 
@@ -423,7 +522,12 @@ export async function probeSchemas(taskId: TaskId, needed: string[]): Promise<Sc
     for (const key of needed) {
       const cue = ATTRIBUTE_CUES[key];
       if (!cue) { found[key] = false; continue; }
-      const hit = names.find((n) => cue.test(n));
+      // For "identity" specifically, a real camelCase field name
+      // (deviceId, accountGuid, ...) is evidence the case-insensitive cue
+      // above cannot see once folded to lowercase - see
+      // IDENTIFIER_FIELD_SUFFIX's own docstring. Field names only, never
+      // brief text, since case there isn't trustworthy the same way.
+      const hit = names.find((n) => cue.test(n) || (key === "identity" && IDENTIFIER_FIELD_SUFFIX.test(n)));
       found[key] = !!hit;
       if (hit) evidence.push(hit);
     }
@@ -462,7 +566,39 @@ export type SegmentMatch = {
   id: string | null;
   name: string | null;
   considered: number;
+  /** How many distinctive terms matched the winning segment's name - 0 when nothing matched. */
+  score: number;
+  /** Which terms actually matched, for a human (or the next agent) to sanity-check the reuse. */
+  matchedTerms: string[];
 };
+
+/**
+ * Minimum fraction of the meaningful search terms a segment's name must
+ * share before a keyword overlap is trusted as "this audience already
+ * exists," rather than just "shares a word with."
+ *
+ * THE BUG THIS FIXES: with no floor, ANY score >= 1 won - so a brief that
+ * shared exactly one generic word with an unrelated segment (see
+ * CATEGORICAL_STOPWORDS's docstring: "Michigan TV-Only Internet Upsell"
+ * matched on "upsell" alone) was treated as definitively the same audience,
+ * and Agent 3 activated that WRONG segment to a real destination on the
+ * strength of it. 0.5 keeps the single-distinctive-term case that
+ * criteriaKeywords exists for working (a brief that says only "ECID" still
+ * matches a segment literally named "Has ECID" at ratio 1/1), while
+ * requiring a brief that produces several meaningful terms to actually
+ * share HALF of them, not just one, before reuse is trusted.
+ */
+export const MIN_SEGMENT_MATCH_RATIO = 0.5;
+
+export type SegmentScore = { score: number; matched: string[]; ratio: number };
+
+/** Pure scoring, split out from findExistingSegment so it's testable without a live/mocked MCP call. */
+export function scoreSegmentName(terms: string[], name: string): SegmentScore {
+  const meaningful = [...new Set(terms.map((t) => String(t).toLowerCase()).filter((t) => t.length > 3))];
+  const hay = name.toLowerCase();
+  const matched = meaningful.filter((t) => hay.includes(t));
+  return { score: matched.length, matched, ratio: meaningful.length ? matched.length / meaningful.length : 0 };
+}
 
 /**
  * Is there already a segment for this? B6's cheapest possible outcome.
@@ -470,6 +606,11 @@ export type SegmentMatch = {
  * Reusing an existing audience skips the build, the nightly job and the whole
  * rework window. It is also the only way to get a real count without writing
  * anything, so it is tried first.
+ *
+ * A match is only trusted at MIN_SEGMENT_MATCH_RATIO or better (see its own
+ * docstring) - below that, this reports "no match" exactly as if nothing had
+ * scored at all, rather than a low-confidence guess a caller might reuse
+ * without checking.
  *
  * `taskId`: see probeSchemas above - same reasoning, same requirement.
  */
@@ -479,19 +620,27 @@ export async function findExistingSegment(taskId: TaskId, terms: string[]): Prom
     const rows = (Array.isArray(result) ? result : ((result as { segments?: unknown[]; data?: unknown[] })?.segments
       || (result as { data?: unknown[] })?.data || [])) as Array<Record<string, unknown>>;
 
-    const meaningful = terms.map((t) => String(t).toLowerCase()).filter((t) => t.length > 3);
-    let best: { id: string; name: string; score: number } | null = null;
+    let best: { id: string; name: string; score: number; matched: string[] } | null = null;
     for (const row of rows) {
       const name = String(row.name || row.title || "");
       const id = String(row.id || row.segmentId || row["meta:altId"] || "");
       if (!name || !id) continue;
-      const hay = name.toLowerCase();
-      const score = meaningful.filter((t) => hay.includes(t)).length;
-      if (score > 0 && (!best || score > best.score)) best = { id, name, score };
+      const { score, matched, ratio } = scoreSegmentName(terms, name);
+      if (score > 0 && ratio >= MIN_SEGMENT_MATCH_RATIO && (!best || score > best.score)) {
+        best = { id, name, score, matched };
+      }
     }
-    return { read: true, error: null, id: best?.id ?? null, name: best?.name ?? null, considered: rows.length };
+    return {
+      read: true,
+      error: null,
+      id: best?.id ?? null,
+      name: best?.name ?? null,
+      considered: rows.length,
+      score: best?.score ?? 0,
+      matchedTerms: best?.matched ?? [],
+    };
   } catch (err) {
-    return { read: false, error: (err as Error).message, id: null, name: null, considered: 0 };
+    return { read: false, error: (err as Error).message, id: null, name: null, considered: 0, score: 0, matchedTerms: [] };
   }
 }
 
@@ -627,6 +776,21 @@ export function decideBuildPath(
       reason:
         `The rule builder can express this once ${absent.join(", ")} ${absent.length === 1 ? "is" : "are"} ` +
         "available. Missing attributes are a B4 attribute request, not a reason to take the federated path.",
+    };
+  }
+
+  // probe.found is keyed exactly by `needed` (see probeSchemas) - empty here
+  // means nothing was recognized as needing a check, not that something WAS
+  // checked and confirmed present. Saying "every attribute is present" on
+  // zero checks is the exact vacuous-truth bug that let an unrecognized
+  // concept (e.g. "personId" before its ATTRIBUTE_CUES entry existed) read
+  // as a confident "all clear" instead of an honest "nothing to verify".
+  if (Object.keys(probe.found).length === 0) {
+    return {
+      buildPath: "aep_rule_builder",
+      reason:
+        "This audience's own criteria don't reference any attribute this app currently recognizes, so " +
+        "there was nothing to check - not a confirmation that everything needed is present.",
     };
   }
 

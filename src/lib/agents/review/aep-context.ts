@@ -114,7 +114,10 @@ export function formatAepContextNote(ctx: AepContext): string {
   }
 
   if (ctx.segmentMatch.id) {
-    lines.push(`- An existing audience may already cover this: "${ctx.segmentMatch.name}" (${ctx.segmentMatch.id}).`);
+    lines.push(
+      `- An existing audience may already cover this: "${ctx.segmentMatch.name}" (${ctx.segmentMatch.id}) - ` +
+        `matched on: ${ctx.segmentMatch.matchedTerms.join(", ")}. Verify this is really the same audience.`,
+    );
   } else if (ctx.segmentMatch.read) {
     lines.push(`- No existing audience matched this request (${ctx.segmentMatch.considered} checked).`);
   } else {

@@ -145,10 +145,17 @@ export function ToolCallTrace({ output, metadata }: { output: ToolCallOutput; me
                 ← {metadata?.fieldCount ?? 0} field(s) found across {schemasInspected} schema(s)
                 {fieldGroupsInspected > 0 ? ` + ${fieldGroupsInspected} field group(s)` : ""}
                 {metadata?.sandbox ? ` in sandbox "${metadata.sandbox}"` : ""}.
-                {metadata?.attributesNeeded?.length ? ` Needed: ${metadata.attributesNeeded.join(", ")}.` : ""}
-                {metadata?.attributesMissing?.length
-                  ? ` Missing: ${metadata.attributesMissing.join(", ")}.`
-                  : " All present."}
+                {metadata?.attributesNeeded?.length
+                  ? ` Needed: ${metadata.attributesNeeded.join(", ")}.` +
+                    (metadata?.attributesMissing?.length
+                      ? ` Missing: ${metadata.attributesMissing.join(", ")}.`
+                      : " All present.")
+                  : // Nothing was recognized as needing a check - vacuously
+                    // "conclusive", but that is NOT the same as "all
+                    // present". See aep.ts's probeSchemas docstring: 0
+                    // checked means nothing about this brief mapped to a
+                    // known attribute, not that everything was verified.
+                    " Nothing recognized to check against this audience's own criteria."}
               </div>
             ) : (
               <div className="font-bold text-amber-300">
