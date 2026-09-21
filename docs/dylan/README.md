@@ -348,4 +348,5 @@ be dealt with before any of this is reachable by anyone outside the demo:
 | Ship a change to the box | section 4 |
 | Who should do this | section 2, then ask the `dylan` agent |
 | What happened last session | [`WORKLOG.md`](WORKLOG.md) |
+| The last state that was known to work, with SHAs | [`STATE-2026-09-21.md`](STATE-2026-09-21.md) |
 | Connect Claude Desktop | the setup guide in the Agent Manager tree |
