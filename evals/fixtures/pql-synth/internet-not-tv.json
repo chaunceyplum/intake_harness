@@ -1,0 +1,7 @@
+{
+  "id": "internet-not-tv",
+  "note": "Grounded in a real run (task_runs, audience_creation, 2026-09-20): with only xfinityInternet/emailAddress confirmed present, the model correctly used only those - but that historical run never had xfinityTV in its verified field set, so it couldn't have expressed the exclusion even if it tried. This fixture supplies xfinityTV as a genuinely available field to test whether the model gets the AND-NOT-TV logic right when it CAN express it.",
+  "criteria": "Existing single-product internet subscribers who do not have Xfinity TV - grow video attach rate ahead of the fall programming season.",
+  "availableFields": ["xfinityInternet", "xfinityTV", "emailAddress"],
+  "rubric": "Must select profiles where xfinityInternet is true AND xfinityTV is false (or not true). Fails if it references any field outside availableFields, drops the TV exclusion entirely, or inverts either condition."
+}

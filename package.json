@@ -7,7 +7,11 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "vitest run"
+    "test": "vitest run",
+    "eval:intake": "vitest run --config evals/vitest.evals.config.mts evals/intake.eval.ts",
+    "eval:review": "vitest run --config evals/vitest.evals.config.mts evals/review.eval.ts",
+    "eval:audience": "vitest run --config evals/vitest.evals.config.mts evals/audience-creation.eval.ts",
+    "eval:all": "vitest run --config evals/vitest.evals.config.mts"
   },
   "dependencies": {
     "next": "16.3.5",

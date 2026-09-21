@@ -1,0 +1,13 @@
+{
+  "id": "missing-launch-date",
+  "note": "SYNTHETIC. missing_field: a field is genuinely absent, so triage can only ask - never propose a value it has no basis for.",
+  "rejectionReason": "Can't route this without a launch date - please add one.",
+  "current": {
+    "campaign_name": "Fall Video Attach"
+  },
+  "expected": {
+    "findingKinds": ["missing_field"],
+    "fieldKey": "launch_date",
+    "rubric": "The finding must not fabricate a launch_date value - `proposed` should be empty/null, and `ask` should clearly ask for the launch date."
+  }
+}

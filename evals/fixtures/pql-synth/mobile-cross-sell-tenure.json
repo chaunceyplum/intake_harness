@@ -1,0 +1,7 @@
+{
+  "id": "mobile-cross-sell-tenure",
+  "note": "Grounded in the real Xfinity Mobile Cross-Sell brief (task_runs, intake, 2026-09-20), extended with a tenure field to test a three-condition AND expression rather than the simpler two-field cases.",
+  "criteria": "Current residential Internet customers with no Xfinity Mobile lines on the account, who have been with us at least 6 months.",
+  "availableFields": ["xfinityInternet", "xfinityMobile", "tenureMonths"],
+  "rubric": "Must select profiles where xfinityInternet is true AND xfinityMobile is false (or absent) AND tenureMonths is at least 6. Fails if it drops the tenure condition, inverts the mobile condition, or references a field outside availableFields."
+}

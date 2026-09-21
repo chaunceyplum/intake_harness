@@ -1,0 +1,17 @@
+{
+  "id": "one-reply-many-fields",
+  "note": "The B1-loop-closing behavior extractFromAnswer exists for: one free-text reply should satisfy more than just the field literally asked about, so the marketer isn't re-asked for things they already volunteered in the same breath.",
+  "answerText": "Yeah, existing Xfinity internet customers in the Northeast, no direct mail please.",
+  "pendingQuestions": [
+    { "key": "customer_type", "label": "Customer type" }
+  ],
+  "expected": {
+    "fields": {
+      "customer_type": "Subscriber - Existing Customers",
+      "region": "Northeast"
+    }
+  },
+  "mustNotContain": {
+    "channels": ["Direct Mail"]
+  }
+}

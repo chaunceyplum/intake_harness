@@ -1,0 +1,14 @@
+{
+  "id": "invalid-lob-value",
+  "note": "SYNTHETIC. invalid_value: a rejected field whose submitted value doesn't match the form's real allowed options - triage should propose the closest real option ('Residential (RES)'), never invent a new one.",
+  "rejectionReason": "Line of business was submitted as 'Resi' which isn't a valid option on the form.",
+  "current": {
+    "line_of_business": "Resi"
+  },
+  "expected": {
+    "findingKinds": ["invalid_value"],
+    "fieldKey": "line_of_business",
+    "proposedOneOf": ["Residential (RES)"],
+    "rubric": "The proposed value must be exactly 'Residential (RES)' (a real allowed option), not an invented variant, and the `ask` should reference the original invalid value 'Resi'."
+  }
+}

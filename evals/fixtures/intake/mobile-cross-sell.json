@@ -1,0 +1,16 @@
+{
+  "id": "mobile-cross-sell",
+  "note": "A real, detailed marketer brief (task_runs, intake, 2026-09-20) with headers/bullets rather than plain prose. Real runs of this exact text extracted channels as 'In-app' only, dropping the explicitly stated 'Email through Campaign, 2 sends' entirely - this fixture pins that Email must survive alongside the in-app banner.",
+  "brief": "# Brief: Xfinity Mobile Cross-Sell to Internet Customers\n\n**From:** Tanya Brooks, Mobile Acquisition\n**Workfront:** Q4 Mobile Growth\n\n## What we're doing\nWe want to get Internet-only customers to add Xfinity Mobile with the \"first line free for a year\" offer. Goal is new mobile lines, obviously, but we'd also like to see if it moves Internet retention.\n\n## Who\n- Current residential Internet customers\n- No Xfinity Mobile lines on the account\n- Been with us at least 6 months\n- Good standing on their bill\n\n## Who not\n- Anyone who had Mobile in the past and cancelled in the last year\n- People in the Q4 speed upgrade campaign (don't want to double up)\n\n## Channels\nEmail through Campaign, 2 sends. We'd also like an in-app banner in the Xfinity app if that's possible for this audience.\n\n## Timing\nWant the first email out the week of October 20. Runs through end of November.",
+  "known": {},
+  "expected": {
+    "fields": {
+      "line_of_business": "Residential (RES)"
+    },
+    "stated": [],
+    "inferred": ["line_of_business", "customer_type"]
+  },
+  "mustContain": {
+    "channels": ["Email"]
+  }
+}

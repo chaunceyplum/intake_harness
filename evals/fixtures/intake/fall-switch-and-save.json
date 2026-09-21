@@ -1,0 +1,17 @@
+{
+  "id": "fall-switch-and-save",
+  "note": "The repo's own documented test brief (local/README.md-adjacent test notes). Real run history shows the LLM path reliably gets the literal fields right but mislabels several as 'stated' when they are paraphrases, not verbatim - this fixture pins the provenance the deterministic parser's own CUES table (parse.ts) already treats as correct.",
+  "brief": "Fall Switch and Save. Growth/Upsell for our existing Xfinity residential internet customers in the Northeast who do not have a mobile line with us yet. Audience where xfinityInternet is true and xfinityMobile is false. We need the audience built and the campaign executed, email and SMS, with a $350 prepaid card offer, in market for 1 November. Activate it to Chauncey's custom destination.",
+  "known": {},
+  "expected": {
+    "fields": {
+      "campaign_name": "Fall Switch and Save",
+      "business_objective": "Growth/Upsell",
+      "region": "Northeast",
+      "request_type": "Audience + Campaign Execution",
+      "offer": "$350 prepaid card"
+    },
+    "stated": ["business_objective", "region"],
+    "inferred": ["customer_type", "line_of_business", "request_type"]
+  }
+}

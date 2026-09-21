@@ -1,0 +1,12 @@
+{
+  "id": "hold-until-lob-sorted",
+  "note": "SYNTHETIC - no real run in this app's history has hit an actual Workfront rejection yet (every real run sampled shows rejection.present: false). This is the exact scenario llm-triage.ts's own docstring names as the reason detectRejectionLlm exists: a freeform hold with no structured status field, which no keyword-stem regex reliably catches.",
+  "comments": [
+    { "message": "Looks mostly good, just want to double check something before this moves forward.", "status": null, "entryDate": "2026-09-01T10:00:00Z" },
+    { "message": "Let's hold this until the LOB is sorted out - it's ambiguous whether this is Residential or Business as written.", "status": null, "entryDate": "2026-09-01T11:30:00Z" }
+  ],
+  "expected": {
+    "rejected": true,
+    "reasonKeywords": ["hold", "LOB"]
+  }
+}

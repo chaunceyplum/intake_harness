@@ -1,0 +1,16 @@
+{
+  "id": "negated-channel",
+  "note": "parse.ts's own docstring documents this exact historical bug: 'outbound call and email, explicitly no direct mail' once matched Direct Mail as a channel because a plain substring match can't tell 'use X' from 'no X'. The LLM path needs the same discipline the deterministic parser's isNegated() enforces - this fixture exists to catch a regression of the negation being dropped.",
+  "brief": "Winback campaign for lapsed Xfinity Mobile customers in the Southeast. Outbound email and SMS only - explicitly no direct mail, and do not call the household phone. Launch 15 January.",
+  "known": {},
+  "expected": {
+    "fields": {
+      "region": "Southeast"
+    },
+    "stated": ["region"],
+    "inferred": []
+  },
+  "mustNotContain": {
+    "channels": ["Direct Mail", "Outbound Call"]
+  }
+}

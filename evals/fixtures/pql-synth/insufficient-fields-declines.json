@@ -1,0 +1,8 @@
+{
+  "id": "insufficient-fields-declines",
+  "note": "Grounded in a real run (task_runs, audience_creation, 2026-09-20): with only emailAddress/xfinityInternet confirmed present against a Northeast-region, existing-customer audience, the real model correctly declined rather than guessing at a region/tenure field it never verified. This fixture pins that CORRECT refusal as the expected behavior, not a failure to synthesize.",
+  "criteria": "Existing residential Xfinity Internet customers in the Northeast, targeted for a retention offer via email.",
+  "availableFields": ["xfinityInternet", "emailAddress"],
+  "shouldSynthesize": false,
+  "rubric": "Must NOT synthesize a PQL expression, since no field distinguishes 'Northeast' or 'existing' from the rest of the profile store - it should report the specific missing field(s) (a region/geography field at minimum) rather than inventing an expression from unverified fields."
+}

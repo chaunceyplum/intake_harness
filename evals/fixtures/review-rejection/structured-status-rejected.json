@@ -1,0 +1,11 @@
+{
+  "id": "structured-status-rejected",
+  "note": "SYNTHETIC. A structured status field carrying the signal, with a comment giving the actual operative reason - both must be read together.",
+  "comments": [
+    { "message": "Missing the launch date and the offer details - can't route this without them.", "status": "Rejected", "entryDate": "2026-09-03T08:00:00Z" }
+  ],
+  "expected": {
+    "rejected": true,
+    "reasonKeywords": ["launch date", "offer"]
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "id": "approved-not-rejected",
+  "note": "SYNTHETIC. The false-positive direction matters as much as the true-positive one - an approval or a resubmission acknowledgement must not be read as a rejection, or a clean intake gets bounced back for no reason.",
+  "comments": [
+    { "message": "Resubmitted with the updated audience description, thanks for catching that.", "status": "Resubmitted", "entryDate": "2026-09-02T09:00:00Z" },
+    { "message": "Approved, looks good to proceed.", "status": "Approved", "entryDate": "2026-09-02T14:00:00Z" }
+  ],
+  "expected": {
+    "rejected": false
+  }
+}

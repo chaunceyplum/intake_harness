@@ -1,0 +1,13 @@
+{
+  "id": "wrong-data-source-prospects",
+  "note": "SYNTHETIC. wrong_data_source is triage.ts's own docstring's 'most expensive finding' - FAC vs. the AEP profile store. This fixture's rejection reason makes it explicit the audience is prospects, which resolveDataSource.ts's PROSPECT_SIGNAL treats as an automatic FAC answer once triage raises the finding.",
+  "rejectionReason": "This audience is prospects who aren't in our system yet, not existing subscribers - so this needs to come from the federated data source, not the AEP profile store as submitted.",
+  "current": {
+    "data_location": "AEP profile store"
+  },
+  "expected": {
+    "findingKinds": ["wrong_data_source"],
+    "fieldKey": "data_location",
+    "rubric": "The `ask` should clearly explain that this audience needs a federated/FAC data source because it targets prospects, not existing customers - not just restate 'wrong data source' with no reasoning."
+  }
+}

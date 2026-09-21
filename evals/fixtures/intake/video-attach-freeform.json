@@ -1,0 +1,15 @@
+{
+  "id": "video-attach-freeform",
+  "note": "A REAL run of this exact brief (task_runs, intake, 2026-09-20) extracted line_of_business as 'Business (SMB)' with provenance 'stated' - wrong on both counts: the brief is entirely about Xfinity residential TV/Internet products, and nothing resembling 'Business (SMB)' or 'SMB' appears anywhere in the text, so it cannot be stated even if it had been the right value. This fixture exists specifically to catch a regression of that exact failure.",
+  "brief": "Requestor/BU: Video & Entertainment Marketing.\n\nBusiness objective: Grow video attach rate among single-product internet subscribers ahead of the fall programming season.\n\nAudience definition: xfinityInternet = true AND xfinityTV = false.\n\nChannel/destination: Email.\n\nOffer: Bundle pricing on a TV tier; first 3 months at promotional rate.\n\nFlight dates: Launch 4 weeks from approval; 6-week flight.\n\nSuccess metrics: Video add-on conversion rate; incremental ARPU per converted household.\n\nSuppressions: Existing TV subscribers.\n\nCDP team notes: Cleanest fit for the schema as built.",
+  "known": {},
+  "expected": {
+    "fields": {
+      "line_of_business": "Residential (RES)",
+      "channels": "Email",
+      "exclusion": "Existing TV subscribers"
+    },
+    "stated": ["channels"],
+    "inferred": ["line_of_business", "customer_type", "business_objective"]
+  }
+}
