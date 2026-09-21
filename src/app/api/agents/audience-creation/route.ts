@@ -384,36 +384,61 @@ async function handlePost(req: NextRequest) {
     // started by our own blind spot.
     const attrState = await attributeRequestState(body.runId, attributesAvailable !== false, missing);
 
+    // An existing audience was found: we are REUSING it, not building one. The
+    // build-path decision (FAC vs. rule builder) describes how you'd BUILD this
+    // audience from scratch - it is moot, and reporting it is actively
+    // contradictory, once a real segment is being reused (and, below, activated).
+    // A live run said "Federated (FAC) path: ... cannot be satisfied in the rule
+    // builder" in the very same breath as "Reusing existing audience ... Activated
+    // this audience": the build path was never taken. When reusing, lead with the
+    // reuse + activation and drop the build-path/PQL-build lines entirely - those
+    // only apply when there is nothing to reuse and we must build.
+    const reusingExisting = !!existing.id;
+
     const statusMessage = [
-      path.buildPath === "fac"
-        ? "Federated (FAC) path: " + path.reason
-        : "AEP rule builder: " + path.reason,
-      probe.conclusive
-        ? `Checked ${probe.fieldCount} field(s) across ${probe.schemasInspected} profile schema(s)` +
-          (probe.sandbox ? ` in sandbox "${probe.sandbox}"` : "") + "."
-        : `Attribute availability is UNDETERMINED: ${probe.error}` +
-          (probe.sandbox ? ` (sandbox "${probe.sandbox}")` : "") +
-          ". No attribute request has been opened on the strength of that.",
-      existing.id
-        ? `Reusing existing audience "${existing.name}".`
+      reusingExisting
+        ? `Reusing existing audience "${existing.name}" - no build needed, so the FAC-vs-rule-builder decision does not apply here.`
         : existing.read
           ? `No existing audience matched (${existing.considered} checked).`
           : `Could not list existing audiences: ${existing.error}.`,
+      // The build path only matters when we actually have to build. Suppress it
+      // entirely when reusing an existing audience.
+      reusingExisting
+        ? ""
+        : path.buildPath === "fac"
+          ? "Federated (FAC) path: " + path.reason
+          : "AEP rule builder: " + path.reason,
+      // Attribute availability still worth stating when building; when reusing an
+      // existing audience the fields it needs are, by definition, already covered.
+      reusingExisting
+        ? ""
+        : probe.conclusive
+          ? `Checked ${probe.fieldCount} field(s) across ${probe.schemasInspected} profile schema(s)` +
+            (probe.sandbox ? ` in sandbox "${probe.sandbox}"` : "") + "."
+          : `Attribute availability is UNDETERMINED: ${probe.error}` +
+            (probe.sandbox ? ` (sandbox "${probe.sandbox}")` : "") +
+            ". No attribute request has been opened on the strength of that.",
       gap.hasGap ? "Identity gap flagged: see identityGap." : "",
-      pqlGuidance
-        ? pqlGuidance.localReference.available
-          ? `PQL reference: ${pqlGuidance.localReference.path} (${pqlGuidance.localReference.categoryCount} categories) - build the segment expression against this, not the knowledge base.`
-          : `PQL reference unavailable: ${pqlGuidance.localReference.error}.`
-        : "",
-      pqlSynthesis
-        ? pqlSynthesis.synthesized
-          ? segmentCreation
-            ? segmentCreation.attempted && segmentCreation.created
-              ? `Created the audience segment "${segmentCreation.name}" (${segmentCreation.segmentId}) from a verified PQL expression (fields: ${pqlSynthesis.fieldsUsed.join(", ")}).`
-              : `Verified PQL expression drafted, but the segment was not created: ${segmentCreation.attempted ? segmentCreation.reason : "creation not attempted"}. See pqlSynthesis/segmentCreation in metadata.`
-            : `Drafted a candidate PQL expression (fields verified present: ${pqlSynthesis.fieldsUsed.join(", ")}) - see pqlSynthesis in metadata. Draft for a human to build from; segment creation is off (set AUDIENCE_CREATE_SEGMENT=true to enable).`
-          : `No PQL expression drafted: ${pqlSynthesis.reason}.`
-        : "",
+      // PQL guidance/synthesis describe BUILDING a new expression - irrelevant
+      // when reusing an existing audience.
+      reusingExisting
+        ? ""
+        : pqlGuidance
+          ? pqlGuidance.localReference.available
+            ? `PQL reference: ${pqlGuidance.localReference.path} (${pqlGuidance.localReference.categoryCount} categories) - build the segment expression against this, not the knowledge base.`
+            : `PQL reference unavailable: ${pqlGuidance.localReference.error}.`
+          : "",
+      reusingExisting
+        ? ""
+        : pqlSynthesis
+          ? pqlSynthesis.synthesized
+            ? segmentCreation
+              ? segmentCreation.attempted && segmentCreation.created
+                ? `Created the audience segment "${segmentCreation.name}" (${segmentCreation.segmentId}) from a verified PQL expression (fields: ${pqlSynthesis.fieldsUsed.join(", ")}).`
+                : `Verified PQL expression drafted, but the segment was not created: ${segmentCreation.attempted ? segmentCreation.reason : "creation not attempted"}. See pqlSynthesis/segmentCreation in metadata.`
+              : `Drafted a candidate PQL expression (fields verified present: ${pqlSynthesis.fieldsUsed.join(", ")}) - see pqlSynthesis in metadata. Draft for a human to build from; segment creation is off (set AUDIENCE_CREATE_SEGMENT=true to enable).`
+            : `No PQL expression drafted: ${pqlSynthesis.reason}.`
+          : "",
       activation ? formatActivationMessage(activation) : "",
       attrState.note,
       cutoff.note,
