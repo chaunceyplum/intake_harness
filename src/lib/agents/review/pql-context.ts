@@ -95,8 +95,14 @@ let cachedReference: PqlLocalReference | undefined;
  * call would be pure overhead. Fails closed: a missing file is reported as
  * `available: false` with the real error, never thrown past this function
  * and never silently treated as "no PQL guidance needed."
+ *
+ * Exported for evals/lib/fake-aep.ts: the PQL-synthesis eval needs a real
+ * `PqlGuidance` grounded against the actual reference file, without paying
+ * for (or depending on) a live `search_adobe_knowledge` MCP call just to
+ * get `hits` - `hits` isn't the trusted source anyway (see this file's
+ * module docstring for why the local reference outranks it).
  */
-function loadPqlReference(): PqlLocalReference {
+export function loadPqlReference(): PqlLocalReference {
   if (cachedReference) return cachedReference;
   const filePath = path.join(process.cwd(), PQL_REFERENCE_RELATIVE_PATH);
   try {

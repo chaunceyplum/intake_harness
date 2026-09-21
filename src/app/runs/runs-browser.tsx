@@ -87,6 +87,29 @@ export function RunsBrowser({ initialRunId }: { initialRunId?: string }) {
     }
   }
 
+  /** Tier 2 of curation - see /api/runs/[runId]/promote/route.ts. Requires the run to already be approved. */
+  async function promoteRun() {
+    if (!selectedRunId || !selectedAdmin) return;
+    setCurating(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/runs/${selectedRunId}/promote`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ adminName: selectedAdmin }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError(data?.error ?? `Failed to promote run (HTTP ${res.status}).`);
+        return;
+      }
+      await loadDetail(selectedRunId);
+      await refresh();
+    } finally {
+      setCurating(false);
+    }
+  }
+
   /**
    * Starts a brand-new run from this run's original input — the exact
    * submission, not a resume/retry of THIS run_id. Useful for checking
@@ -396,6 +419,11 @@ export function RunsBrowser({ initialRunId }: { initialRunId?: string }) {
                     Approved by {detail.run.approved_by}
                   </span>
                 )}
+                {detail.run.promoted && (
+                  <span className="rounded-full bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-800 dark:bg-purple-950 dark:text-purple-400">
+                    Promoted by {detail.run.promoted_by}
+                  </span>
+                )}
                 <button
                   onClick={runAgain}
                   disabled={runningAgain}
@@ -437,6 +465,14 @@ export function RunsBrowser({ initialRunId }: { initialRunId?: string }) {
                       className="rounded-full border border-zinc-300 px-3 py-1 font-medium text-zinc-700 disabled:cursor-not-allowed disabled:opacity-40 dark:border-zinc-700 dark:text-zinc-300"
                     >
                       {detail.run.approved ? "Approved" : "Approve"}
+                    </button>
+                    <button
+                      onClick={promoteRun}
+                      disabled={curating || !selectedAdmin || !detail.run.approved || detail.run.promoted}
+                      title={!detail.run.approved ? "Approve this run first" : undefined}
+                      className="rounded-full border border-zinc-300 px-3 py-1 font-medium text-zinc-700 disabled:cursor-not-allowed disabled:opacity-40 dark:border-zinc-700 dark:text-zinc-300"
+                    >
+                      {detail.run.promoted ? "Promoted" : "Promote"}
                     </button>
                   </div>
                 </div>

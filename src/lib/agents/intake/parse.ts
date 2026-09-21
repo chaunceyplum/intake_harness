@@ -264,8 +264,16 @@ function findCampaignName(brief: string): ExtractedField | null {
  * Read a brief.
  * @param brief the marketer's own words
  * @param known anything already structured (a rework loop carries this)
+ * @param provenance where each `known` value actually came from, when it is
+ *   NOT a plain stated fact - e.g. an LLM extraction the caller is layering
+ *   in as "inferred". A key absent from this map defaults to "stated", which
+ *   is correct for the ordinary case (a human-confirmed rework answer).
  */
-export function parseBrief(brief: string, known: Record<string, unknown> = {}): ParsedIntake {
+export function parseBrief(
+  brief: string,
+  known: Record<string, unknown> = {},
+  provenance: Record<string, Provenance> = {},
+): ParsedIntake {
   const extracted: ExtractedField[] = [];
   const seen = new Set<string>();
 
@@ -275,11 +283,15 @@ export function parseBrief(brief: string, known: Record<string, unknown> = {}): 
     extracted.push(f);
   };
 
-  // 1. Anything already structured wins outright - it was stated, not guessed.
+  // 1. Anything already structured wins outright over a cue-phrase guess -
+  // but it is only "stated" when nothing says otherwise. A value the caller
+  // itself labeled "inferred" (an LLM extraction, layered in via `known`)
+  // must keep carrying that label, or it reaches a human as a confirmed
+  // fact it never was - the exact silent-fill this module exists to prevent.
   for (const spec of CAMPAIGN_BRIEF_FIELDS) {
     const existing = known[spec.key];
     if (existing != null && String(existing).trim() !== "") {
-      push({ key: spec.key, label: spec.label, value: String(existing), from: "stated" });
+      push({ key: spec.key, label: spec.label, value: String(existing), from: provenance[spec.key] ?? "stated" });
     }
   }
 

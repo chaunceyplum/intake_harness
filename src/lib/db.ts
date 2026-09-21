@@ -73,3 +73,48 @@ export async function query<T extends QueryResultRow = QueryResultRow>(
   const { rows } = await getPool().query<T>(text, params);
   return rows;
 }
+
+/**
+ * Run `fn` while holding a Postgres session-level advisory lock keyed by
+ * `key` - the mutual-exclusion primitive orchestrator.ts's resumeRun/
+ * continueRun/retryRun use so two concurrent requests for the SAME run_id
+ * (a double-clicked Resume/Approve/Retry button, or a retried client call)
+ * can't both pass their own "is this run in the right status" check and
+ * both advance the pipeline in parallel - which would run one agent step
+ * twice and write two task_runs rows for it.
+ *
+ * WHY A DEDICATED CONNECTION, NOT THE SHARED `query()` HELPER: an advisory
+ * lock is tied to the Postgres BACKEND (session) that took it, and `query()`
+ * borrows a arbitrary connection from the pool per call - so a lock taken on
+ * one pooled connection could never be reliably released on another. This
+ * checks a client out of the pool for the lock's whole lifetime instead, and
+ * always releases (both the lock and the connection) in `finally`.
+ *
+ * `hashtext(key)` folds the key into a 32-bit int for pg_try_advisory_lock -
+ * a rare hash collision between two DIFFERENT run_ids only costs unnecessary
+ * serialization between them, never a false "already locked" for the wrong
+ * reason, so this is a safe tradeoff against plumbing a real bigint key.
+ *
+ * Throws immediately (does not queue/wait) when the lock is already held -
+ * a caller that loses the race should surface a clear "already in progress"
+ * error, not block and then run anyway.
+ */
+export async function withAdvisoryLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const client = await getPool().connect();
+  try {
+    const { rows } = await client.query<{ locked: boolean }>(
+      `SELECT pg_try_advisory_lock(hashtext($1)) AS locked`,
+      [key],
+    );
+    if (!rows[0]?.locked) {
+      throw new Error(`"${key}" is already being processed by another request.`);
+    }
+    try {
+      return await fn();
+    } finally {
+      await client.query(`SELECT pg_advisory_unlock(hashtext($1))`, [key]);
+    }
+  } finally {
+    client.release();
+  }
+}

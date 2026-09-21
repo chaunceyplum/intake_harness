@@ -67,10 +67,12 @@ CREATE INDEX IF NOT EXISTS idx_task_runs_task ON task_runs(task_id, started_at);
 -- (CREATE TABLE IF NOT EXISTS is a no-op on an existing table's columns).
 --
 -- Tier 1, "approved": a named admin marks a completed run worth keeping as
--- an example. Tier 2, "promoted": that same run is additionally admitted
--- into the cross-run Shared Graph (see GET /api/graph). Both always carry
--- who and when — an approval or promotion with no admin behind it isn't a
--- record of anything. Promotion requires prior approval, enforced in
+-- an example. Tier 2, "promoted": that same run is additionally marked
+-- worth surfacing more broadly - just a queryable flag today (this harness
+-- has no `/api/graph` of its own; that's a different product's feature, see
+-- services/agent-manager). Both always carry who and when — an approval or
+-- promotion with no admin behind it isn't a record of anything. Promotion
+-- requires prior approval, enforced in
 -- src/app/api/runs/[runId]/promote/route.ts rather than a CHECK constraint,
 -- to keep this file plain ALTERs.
 ALTER TABLE runs ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}';
@@ -112,7 +114,9 @@ ALTER TABLE task_runs ADD COLUMN IF NOT EXISTS model TEXT;
 
 -- Programmes: a named grouping a run can belong to (ported from Agent
 -- Manager's Project, minus its lifecycle machinery — just enough to group
--- runs). upsert-by-name in src/lib/pipeline/programmes.ts, so submitting
+-- runs). NOT YET WIRED UP: no route or UI creates a programme or assigns
+-- programme_id today - this table and the column below are schema ahead of
+-- code. The intended shape (once built) is upsert-by-name, so submitting
 -- the same programme name twice reuses the row rather than duplicating it.
 CREATE TABLE IF NOT EXISTS programmes (
     programme_id  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -132,8 +136,10 @@ CREATE INDEX IF NOT EXISTS idx_runs_programme ON runs(programme_id);
 -- keeping that ISN'T a pipeline run. Single content blob per resource, not
 -- an ordered step log: Agent Manager needed steps because the same object
 -- doubled as both a run record and a doc; here `task_runs` already owns run
--- history, so a resource only needs to be a doc. Same two-tier curation as
--- `runs` (approved -> promoted into the Shared Graph), same admin model.
+-- history, so a resource only needs to be a doc. Same two-tier curation
+-- shape as `runs` (approved -> promoted), same admin model. NOT YET WIRED
+-- UP: no route or UI reads or writes this table today - schema ahead of
+-- code, same as `programmes` above.
 CREATE TABLE IF NOT EXISTS resources (
     resource_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     type           TEXT NOT NULL CHECK (type IN (
@@ -179,10 +185,12 @@ INSERT INTO settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
 -- segmentation_labels/kind_labels rename what things are CALLED (internal
 -- keys — "programme", each resources.type value — never change, only their
 -- display label, so relabeling never breaks stored data or filters, same
--- principle as that D48 override). promote_admins is the "Hero Agents"
--- roster (D64): the subset of ADMIN_NAMES allowed to promote into the
--- Shared Graph. NULL/empty means "any admin may promote" — today's
--- behavior — so this is purely additive until an admin actually sets one.
+-- principle as that D48 override; NOT YET READ anywhere, since programmes/
+-- resources themselves aren't wired up yet either). promote_admins IS live:
+-- the "Hero Agents" roster (D64), a subset of ADMIN_NAMES allowed to
+-- promote a run (tier 2) — see src/lib/admins.ts's isPromoteAdmin, enforced
+-- in src/app/api/runs/[runId]/promote/route.ts. NULL/empty means "any admin
+-- may promote".
 ALTER TABLE settings ADD COLUMN IF NOT EXISTS segmentation_labels JSONB NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE settings ADD COLUMN IF NOT EXISTS kind_labels JSONB NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE settings ADD COLUMN IF NOT EXISTS promote_admins TEXT[];

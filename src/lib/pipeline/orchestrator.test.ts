@@ -13,7 +13,13 @@ import type { RunRow } from "./types";
 
 const queryMock = vi.fn();
 const callMcpToolMock = vi.fn();
-vi.mock("@/lib/db", () => ({ query: (...args: unknown[]) => queryMock(...args) }));
+// withAdvisoryLock is a real passthrough here - these tests run sequentially,
+// single-connection, so there's no concurrent caller for it to serialize
+// against. See db.ts for what it actually does against a real Postgres pool.
+vi.mock("@/lib/db", () => ({
+  query: (...args: unknown[]) => queryMock(...args),
+  withAdvisoryLock: async <T>(_key: string, fn: () => Promise<T>) => fn(),
+}));
 vi.mock("@/lib/mcp-client", () => ({ callMcpTool: (...args: unknown[]) => callMcpToolMock(...args) }));
 
 const { runPipeline, continueRun } = await import("./orchestrator");

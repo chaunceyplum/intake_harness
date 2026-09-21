@@ -29,9 +29,10 @@
 
 import type { SchemaProbe } from "./aep";
 import type { PqlGuidance } from "@/lib/agents/review/pql-context";
-import { getLlmClient, type LlmClient } from "@/lib/llm";
+import { resolveLlmClient, type LlmClient } from "@/lib/llm";
 import { callMcpTool } from "@/lib/mcp-client";
 import type { TaskId } from "@/lib/pipeline/types";
+import { findPriorTaskRun } from "@/lib/pipeline/idempotent-write";
 
 export type PqlSynthesis = {
   /** Did we produce a verified candidate expression? */
@@ -75,6 +76,12 @@ export type SegmentCreation =
   | {
       attempted: true;
       created: true;
+      /**
+       * True when this is a PRIOR successful create for this exact run,
+       * found and reused rather than created again - see
+       * findPriorSegmentCreation's idempotency check.
+       */
+      reused?: boolean;
       segmentId: string;
       name: string;
       pql: string;
@@ -94,8 +101,18 @@ const SYSTEM = [
   "- Use ONLY the profile field names provided as available. Never reference a",
   "  field that is not in that list, even if it seems obvious it should exist.",
   "- Use ONLY PQL syntax from the reference provided.",
-  "- If the available fields are insufficient to express the audience, say so",
-  '  by returning an empty pql ("") and listing what is missing.',
+  "- The expression MUST capture EVERY condition in the criteria - not just the",
+  "  ones you happen to have a field for. If even ONE condition (a region, a",
+  "  tenure/recency threshold, an exclusion, a channel-eligibility flag, ...)",
+  "  has no available field to express it, the available fields are",
+  "  INSUFFICIENT for the whole audience. Do NOT silently narrow the audience",
+  "  by writing an expression for only the conditions you could match and",
+  "  dropping the rest - a segment for the wrong (broader) audience is a wrong",
+  "  answer, not a partial one, and it will be created for real without anyone",
+  "  noticing the missing condition.",
+  "- When insufficient (per the rule above), return an empty pql (\"\") and list",
+  "  EVERY condition you could not express in `missing` - not just the first",
+  "  one you notice.",
   "Return ONLY JSON.",
 ].join("\n");
 
@@ -159,9 +176,16 @@ export async function synthesizePql(
   criteria: string,
   probe: SchemaProbe,
   pqlGuidance: PqlGuidance,
-  client: LlmClient | null = getLlmClient(),
+  client?: LlmClient | null,
 ): Promise<PqlSynthesis> {
-  if (!client) return NOT_SYNTHESIZED("no LLM configured; Agent 3 reports the build path without a drafted expression");
+  const { client: resolvedClient, configError } = resolveLlmClient(client);
+  if (!resolvedClient) {
+    return NOT_SYNTHESIZED(
+      configError
+        ? `LLM misconfigured (${configError}); Agent 3 reports the build path without a drafted expression`
+        : "no LLM configured; Agent 3 reports the build path without a drafted expression",
+    );
+  }
   if (!criteria.trim()) return NOT_SYNTHESIZED("no audience criteria to express");
 
   // An inconclusive probe means we don't know what fields exist - synthesizing
@@ -182,7 +206,7 @@ export async function synthesizePql(
   }
 
   try {
-    const completion = await client.complete({
+    const completion = await resolvedClient.complete({
       system: SYSTEM,
       prompt: [
         `Audience criteria: ${criteria.trim()}`,
@@ -257,6 +281,29 @@ export function isMissingWriteTool(raw: string): boolean {
 }
 
 /**
+ * Has THIS RUN already created a segment from a verified PQL expression?
+ *
+ * THE SAME RACE createIntakeRequest's findPriorSuccess closes, one write
+ * over: adobe_create_segment can succeed and then the process can crash
+ * before the step's own task_runs row commits, leaving the run at "running"
+ * with no memory the create happened. retryRun then re-invokes this exact
+ * step from scratch, and without this check that re-invocation creates a
+ * SECOND, real, duplicate segment in AEP - the write this function's own
+ * "HONESTY CONTRACT, identical to createIntakeRequest" docstring claims but,
+ * until this guard, did not actually share.
+ *
+ * FAILS OPEN: built on findPriorTaskRun, which returns null (never throws)
+ * on a query error, so a broken check can only fail to skip a redundant
+ * create, never block a legitimate one.
+ */
+async function findPriorSegmentCreation(runId: string): Promise<Extract<SegmentCreation, { created: true }> | null> {
+  const prior = await findPriorTaskRun<{ segmentCreation?: SegmentCreation }>(runId, "audience_creation", ["completed"]);
+  const sc = prior?.output?.segmentCreation;
+  if (sc && sc.attempted && sc.created === true && sc.segmentId) return sc;
+  return null;
+}
+
+/**
  * Create the AEP segment from a VERIFIED synthesized expression.
  *
  * PRECONDITIONS THE CALLER MUST HAVE MET (this function does not re-derive
@@ -274,6 +321,7 @@ export function isMissingWriteTool(raw: string): boolean {
  * never failed by an attempt to create.
  */
 export async function createSegmentFromPql(
+  runId: string,
   taskId: TaskId,
   synthesis: PqlSynthesis,
   name: string,
@@ -281,6 +329,10 @@ export async function createSegmentFromPql(
   if (!synthesis.synthesized || !synthesis.pql) {
     return { attempted: false, reason: "no verified PQL expression to create a segment from" };
   }
+
+  const prior = await findPriorSegmentCreation(runId);
+  if (prior) return { ...prior, reused: true };
+
   const segmentName = name.trim() || "Untitled audience";
 
   try {

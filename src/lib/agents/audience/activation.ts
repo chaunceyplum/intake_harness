@@ -360,7 +360,16 @@ export type ActivationOutcome =
   | { status: "needs_manual_wiring"; destinationName: string; dataflowId: string; reason: string }
   | { status: "no_segment_to_activate"; reason: string }
   | { status: "created"; destinationName: string; dataflowId: string }
-  | { status: "create_failed"; destinationName: string; reason: string };
+  | { status: "create_failed"; destinationName: string; reason: string }
+  /**
+   * The dataflow read itself failed (network/MCP error) - distinct from a
+   * CONFIRMED absence (destination_not_found, where the read succeeded and
+   * genuinely found nothing). Reported honestly rather than treated as "no
+   * dataflow exists", which would let a transient read failure fall through
+   * to destination_create_dataflow and mint a duplicate dataflow for a
+   * destination that may already have one.
+   */
+  | { status: "lookup_failed"; destinationName: string; reason: string };
 
 /**
  * The activation decision, given a segment findExistingSegment already
@@ -389,6 +398,18 @@ export async function activateAudience(
   }
 
   const match = await findDestinationDataflow(taskId, args.destinationName);
+  // A failed READ is not a confirmed absence. Bail here, honestly, rather
+  // than let a transient dataflow-list error fall through to "no dataflow
+  // found" and risk minting a duplicate dataflow for a destination that may
+  // already have one (see this file's docstring point 1/2 and
+  // findDestinationDataflow's catch).
+  if (!match.read) {
+    return {
+      status: "lookup_failed",
+      destinationName: args.destinationName,
+      reason: `could not check whether "${args.destinationName}" already has a dataflow: ${match.error}`,
+    };
+  }
   if (match.dataflow) {
     if (selectorsIncludeSegment(match.dataflow.segmentSelectors, args.segmentId)) {
       return { status: "already_active", destinationName: match.dataflow.name, dataflowId: match.dataflow.id };

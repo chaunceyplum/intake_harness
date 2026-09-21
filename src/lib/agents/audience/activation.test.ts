@@ -85,6 +85,25 @@ describe("activateAudience - already active / needs manual wiring (unchanged rea
   });
 });
 
+describe("activateAudience - a failed read is not a confirmed absence", () => {
+  it("reports lookup_failed, not destination_not_found, when the dataflow list read itself throws", async () => {
+    callMcpToolMock.mockImplementation((_taskId: string, tool: string) => {
+      if (tool === "destination_list_dataflows") return Promise.reject(new Error("AEP gateway timed out"));
+      throw new Error(`unexpected tool ${tool}`);
+    });
+
+    const result = await activateAudience("audience_creation", {
+      segmentId: "seg-123",
+      segmentName: "Has ECID",
+      destinationName: "chaunceys custom dest",
+    });
+    expect(result.status).toBe("lookup_failed");
+    if (result.status === "lookup_failed") expect(result.reason).toMatch(/AEP gateway timed out/);
+    // Must not fall through to the create path on an unconfirmed absence.
+    expect(callMcpToolMock).not.toHaveBeenCalledWith(expect.anything(), "destination_create_dataflow", expect.anything());
+  });
+});
+
 describe("activateAudience - creating a new dataflow (no existing dataflow for this destination)", () => {
   // Fixtures below mirror REAL shapes verified live against the gateway,
   // 20 Sep 2026 (destination_get_target_connection on a real target

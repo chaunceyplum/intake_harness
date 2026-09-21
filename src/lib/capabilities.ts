@@ -139,6 +139,14 @@ async function probeLlm(): Promise<CapabilityReport["llm"]> {
     if (!rawHost) {
       return { configured: true, provider, reachable: false, note: "LLM_PROVIDER=ollama but OLLAMA_HOST is not set." };
     }
+    // getLlmClient() (lib/llm/index.ts) requires OLLAMA_MODEL just as much as
+    // OLLAMA_HOST - Ollama has no default model. Checking only the host here
+    // let this report back "reachable: true" for a config that still throws
+    // LlmConfigError on the very first real call, a green check contradicted
+    // immediately by the first run.
+    if (!(process.env.OLLAMA_MODEL || "").trim()) {
+      return { configured: true, provider, reachable: false, note: "LLM_PROVIDER=ollama but OLLAMA_MODEL is not set." };
+    }
     let base = rawHost;
     if (!/^https?:\/\//i.test(base)) base = `http://${base}`;
     try {

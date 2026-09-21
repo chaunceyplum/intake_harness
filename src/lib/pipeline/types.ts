@@ -80,7 +80,13 @@ export interface RunRow {
   input: unknown;
   created_at: string;
   updated_at: string;
-  /** Optional grouping — see src/lib/programmes.ts. Set via an optional `programme` name on the submission. */
+  /**
+   * Optional grouping, ported from db/schema.sql's `programmes` table.
+   * NOT YET WIRED UP: no route or UI sets this today (nothing creates a
+   * programme or assigns a run to one) - it is schema ahead of code, kept
+   * honest here rather than pointing at a `src/lib/programmes.ts` that
+   * doesn't exist. Build the programmes CRUD before relying on this field.
+   */
   programme_id: string | null;
   /** Two-tier human curation — see src/app/api/runs/[runId]/{approve,promote}/route.ts. */
   tags: string[];
@@ -88,7 +94,14 @@ export interface RunRow {
   approved_by: string | null;
   approved_at: string | null;
   approval_note: string | null;
-  /** Admitted into the cross-run Shared Graph (GET /api/graph). Requires `approved` first. */
+  /**
+   * Tier 2: an approved run an admin has additionally marked worth
+   * surfacing more broadly. Set by POST /api/runs/[runId]/promote, which
+   * requires `approved` first. NOT the same "graph" as CX Agent Manager's
+   * own cross-agent graph (services/agent-manager) - this harness has no
+   * `/api/graph` of its own; `promoted` is currently just a queryable flag
+   * on `runs`; see stats.promoted (page.tsx/settings) for where it's read.
+   */
   promoted: boolean;
   promoted_by: string | null;
   promoted_at: string | null;

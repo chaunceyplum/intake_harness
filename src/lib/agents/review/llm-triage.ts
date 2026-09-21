@@ -39,7 +39,7 @@ import {
   type RejectionKind,
 } from "./triage";
 import { detectRejection, type CommentLike, type RejectionSignal } from "./rejection";
-import { getLlmClient, type LlmClient } from "@/lib/llm";
+import { resolveLlmClient, type LlmClient } from "@/lib/llm";
 
 export type Agent2Source = "llm" | "deterministic";
 
@@ -94,13 +94,18 @@ function buildRejectionPrompt(rows: CommentLike[]): string {
  */
 export async function detectRejectionLlm(
   rows: CommentLike[],
-  client: LlmClient | null = getLlmClient(),
+  client?: LlmClient | null,
 ): Promise<LlmRejectionResult> {
-  if (!client || !Array.isArray(rows) || rows.length === 0) {
-    return { signal: detectRejection(rows), source: "deterministic", fallbackReason: null };
+  const { client: resolvedClient, configError } = resolveLlmClient(client);
+  if (!resolvedClient || !Array.isArray(rows) || rows.length === 0) {
+    return {
+      signal: detectRejection(rows),
+      source: "deterministic",
+      fallbackReason: configError ? `LLM misconfigured (${configError}); used the deterministic reader.` : null,
+    };
   }
   try {
-    const completion = await client.complete({
+    const completion = await resolvedClient.complete({
       system: REJECTION_SYSTEM,
       prompt: buildRejectionPrompt(rows),
       temperature: 0,
@@ -172,6 +177,13 @@ const TRIAGE_SYSTEM = [
   '  "wrong_data_source" - the data is being read from the wrong place (FAC vs the AEP profile store);',
   '  "unclassified"      - real, but not reducible to a field; a human must read it.',
   "Only use the exact field keys given. Never invent a field or an allowed value.",
+  "`ask` MUST explain WHY, not just state the fix - a marketer confirming this",
+  "needs to understand the reasoning to trust it, not just see a new value",
+  "appear. A bad ask: \"Change line_of_business to Residential (RES).\" A good",
+  "ask: \"line_of_business was submitted as 'Resi', which isn't a valid option -",
+  "changed to Residential (RES), the closest match.\" When the rejection gives a",
+  "REASON (e.g. the audience is prospects, not existing customers), the ask",
+  "must carry that reason forward, not just the resulting field change.",
   "Return ONLY JSON.",
 ].join("\n");
 
@@ -277,14 +289,20 @@ function assemble(current: Record<string, string>, findings: TriageFinding[]): T
 export async function triageRejectionLlm(
   reason: string,
   current: Record<string, string> = {},
-  client: LlmClient | null = getLlmClient(),
+  client?: LlmClient | null,
 ): Promise<LlmTriageResult> {
   const text = String(reason || "").trim();
-  if (!client || !text) {
-    return { triage: triageRejection(text, current), source: "deterministic", model: null, fallbackReason: null };
+  const { client: resolvedClient, configError } = resolveLlmClient(client);
+  if (!resolvedClient || !text) {
+    return {
+      triage: triageRejection(text, current),
+      source: "deterministic",
+      model: null,
+      fallbackReason: configError ? `LLM misconfigured (${configError}); used the deterministic translator.` : null,
+    };
   }
   try {
-    const completion = await client.complete({
+    const completion = await resolvedClient.complete({
       system: TRIAGE_SYSTEM,
       prompt: buildTriagePrompt(text, current),
       temperature: 0,

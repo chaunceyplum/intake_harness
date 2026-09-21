@@ -1,4 +1,4 @@
-import { query } from "@/lib/db";
+import { query, withAdvisoryLock } from "@/lib/db";
 import { PIPELINE } from "./registry";
 import type { AgentName, AgentRequest, AgentResponse, RunRow, TaskRow, TaskRunRow } from "./types";
 import * as liveProgress from "@/lib/live-progress";
@@ -86,6 +86,14 @@ async function advanceOneStep(
   // own INSERT ever committed leaves nothing here to find, and only a live
   // check against Workfront's own comment stream could close that half; see
   // idempotent-write.ts's docstring for why that is not what this is.
+  //
+  // (run_id, task_id, step_index, status) alone is NOT enough to identify
+  // "this exact invocation": Intake's needs_input loop re-enters at the same
+  // step_index every round, so a second, genuinely different round (a new
+  // question, answered and re-paused) matches that same tuple as the first
+  // round did. Comparing the prior row's own `input` against THIS call's
+  // `currentInput` is what tells a crash-retry (identical input) from a new
+  // round (different input) apart - only the former should reuse the old post.
   // Kill switch: skip the Workfront comment post AND the idempotency lookup
   // that only guards it, so a run flows without the broken write tools. See
   // agents/shared/workfront-writes.ts.
@@ -99,7 +107,10 @@ async function advanceOneStep(
       [response.status],
       stepIndex,
     );
-    const priorUpdate = (priorStep?.metadata as { workfrontUpdate?: AgentUpdateResult } | null)?.workfrontUpdate;
+    const sameInvocation = !!priorStep && JSON.stringify(priorStep.input) === JSON.stringify(currentInput);
+    const priorUpdate = sameInvocation
+      ? (priorStep!.metadata as { workfrontUpdate?: AgentUpdateResult } | null)?.workfrontUpdate
+      : undefined;
     workfrontUpdate =
       priorUpdate?.attempted && priorUpdate.posted
         ? { ...priorUpdate, reused: true }
@@ -186,25 +197,35 @@ async function advanceOneStep(
  * re-attempts `current_step` from scratch using the same "what's already
  * completed" reconstruction resumeRun/continueRun use, so retrying costs
  * nothing but time — it is not a guess at what the dead attempt was doing.
+ *
+ * WRAPPED IN AN ADVISORY LOCK (see db.ts's withAdvisoryLock), keyed per
+ * run_id: retryRun's whole premise is "the earlier request died mid-step",
+ * but nothing here can actually tell that apart from "the earlier request
+ * is merely slow" - a second retryRun (or a genuinely still-in-flight first
+ * request) for the SAME run would otherwise run this exact step twice in
+ * parallel. The lock makes a concurrent call for the same run fail fast
+ * with a clear error instead of racing.
  */
 export async function retryRun(runId: string, baseUrl: string): Promise<RunRow> {
-  const [run] = await query<RunRow>(`SELECT * FROM runs WHERE run_id = $1`, [runId]);
-  if (!run) {
-    throw new Error(`No run found for run_id ${runId}.`);
-  }
-  if (run.status !== "running") {
-    throw new Error(`Run ${runId} is "${run.status}", not "running" — nothing to retry.`);
-  }
+  return withAdvisoryLock(`run:${runId}`, async () => {
+    const [run] = await query<RunRow>(`SELECT * FROM runs WHERE run_id = $1`, [runId]);
+    if (!run) {
+      throw new Error(`No run found for run_id ${runId}.`);
+    }
+    if (run.status !== "running") {
+      throw new Error(`Run ${runId} is "${run.status}", not "running" — nothing to retry.`);
+    }
 
-  const { priorOutputs, lastCompleted } = await completedTaskRunsFor(runId);
-  const currentInput = lastCompleted ? lastCompleted.output : run.input;
+    const { priorOutputs, lastCompleted } = await completedTaskRunsFor(runId);
+    const currentInput = lastCompleted ? lastCompleted.output : run.input;
 
-  liveProgress.resetRun(runId);
-  try {
-    return await advanceOneStep(run, run.current_step, currentInput, priorOutputs, baseUrl);
-  } finally {
-    liveProgress.clearRun(runId);
-  }
+    liveProgress.resetRun(runId);
+    try {
+      return await advanceOneStep(run, run.current_step, currentInput, priorOutputs, baseUrl);
+    } finally {
+      liveProgress.clearRun(runId);
+    }
+  });
 }
 
 /** Starts a run and executes only its first agent (Intake). */
@@ -231,29 +252,44 @@ export async function runPipeline(initialInput: unknown, baseUrl: string): Promi
  * run would have. If the answer resolves it, the run lands in
  * "awaiting_approval" like any other completed step — answering a question
  * is not the same act as approving the next agent.
+ *
+ * WRAPPED IN AN ADVISORY LOCK per run_id (see db.ts's withAdvisoryLock), and
+ * the status-flip UPDATE below is itself guarded with `AND status =
+ * 'needs_input'`: two concurrent resume calls for the same run (a
+ * double-clicked Resume button, or a retried client request) both reading
+ * the same pre-flip status in the SELECT above would otherwise both pass
+ * the check and both call advanceOneStep - running the same step twice.
+ * The lock alone would already prevent that here, but the guarded UPDATE is
+ * cheap, correct on its own, and keeps this function safe even if it's ever
+ * called without the lock.
  */
 export async function resumeRun(runId: string, resumedInput: unknown, baseUrl: string): Promise<RunRow> {
-  const [run] = await query<RunRow>(`SELECT * FROM runs WHERE run_id = $1`, [runId]);
-  if (!run) {
-    throw new Error(`No run found for run_id ${runId}.`);
-  }
-  if (run.status !== "needs_input") {
-    throw new Error(`Run ${runId} is "${run.status}", not "needs_input" — nothing to resume.`);
-  }
+  return withAdvisoryLock(`run:${runId}`, async () => {
+    const [run] = await query<RunRow>(`SELECT * FROM runs WHERE run_id = $1`, [runId]);
+    if (!run) {
+      throw new Error(`No run found for run_id ${runId}.`);
+    }
+    if (run.status !== "needs_input") {
+      throw new Error(`Run ${runId} is "${run.status}", not "needs_input" — nothing to resume.`);
+    }
 
-  const { priorOutputs } = await completedTaskRunsFor(runId);
+    const { priorOutputs } = await completedTaskRunsFor(runId);
 
-  const [running] = await query<RunRow>(
-    `UPDATE runs SET status = 'running', updated_at = NOW() WHERE run_id = $1 RETURNING *`,
-    [runId],
-  );
+    const [running] = await query<RunRow>(
+      `UPDATE runs SET status = 'running', updated_at = NOW() WHERE run_id = $1 AND status = 'needs_input' RETURNING *`,
+      [runId],
+    );
+    if (!running) {
+      throw new Error(`Run ${runId} is no longer "needs_input" — another request may have already resumed it.`);
+    }
 
-  liveProgress.resetRun(runId);
-  try {
-    return await advanceOneStep(running, running.current_step, resumedInput, priorOutputs, baseUrl);
-  } finally {
-    liveProgress.clearRun(runId);
-  }
+    liveProgress.resetRun(runId);
+    try {
+      return await advanceOneStep(running, running.current_step, resumedInput, priorOutputs, baseUrl);
+    } finally {
+      liveProgress.clearRun(runId);
+    }
+  });
 }
 
 /**
@@ -261,30 +297,39 @@ export async function resumeRun(runId: string, resumedInput: unknown, baseUrl: s
  * "yes, go ahead" action behind the per-agent approval gate. `current_step`
  * already points at the next agent to run (advanceOneStep advanced it past
  * the one that just completed), and its input is that prior agent's output.
+ *
+ * WRAPPED IN AN ADVISORY LOCK per run_id, same reasoning as resumeRun: the
+ * status-flip UPDATE is guarded with `AND status = 'awaiting_approval'` so
+ * a double-clicked Approve button can't advance the same step twice.
  */
 export async function continueRun(runId: string, baseUrl: string): Promise<RunRow> {
-  const [run] = await query<RunRow>(`SELECT * FROM runs WHERE run_id = $1`, [runId]);
-  if (!run) {
-    throw new Error(`No run found for run_id ${runId}.`);
-  }
-  if (run.status !== "awaiting_approval") {
-    throw new Error(`Run ${runId} is "${run.status}", not "awaiting_approval" — nothing to approve.`);
-  }
+  return withAdvisoryLock(`run:${runId}`, async () => {
+    const [run] = await query<RunRow>(`SELECT * FROM runs WHERE run_id = $1`, [runId]);
+    if (!run) {
+      throw new Error(`No run found for run_id ${runId}.`);
+    }
+    if (run.status !== "awaiting_approval") {
+      throw new Error(`Run ${runId} is "${run.status}", not "awaiting_approval" — nothing to approve.`);
+    }
 
-  const { priorOutputs, lastCompleted } = await completedTaskRunsFor(runId);
-  const currentInput = lastCompleted ? lastCompleted.output : run.input;
+    const { priorOutputs, lastCompleted } = await completedTaskRunsFor(runId);
+    const currentInput = lastCompleted ? lastCompleted.output : run.input;
 
-  const [running] = await query<RunRow>(
-    `UPDATE runs SET status = 'running', updated_at = NOW() WHERE run_id = $1 RETURNING *`,
-    [runId],
-  );
+    const [running] = await query<RunRow>(
+      `UPDATE runs SET status = 'running', updated_at = NOW() WHERE run_id = $1 AND status = 'awaiting_approval' RETURNING *`,
+      [runId],
+    );
+    if (!running) {
+      throw new Error(`Run ${runId} is no longer "awaiting_approval" — another request may have already approved it.`);
+    }
 
-  liveProgress.resetRun(runId);
-  try {
-    return await advanceOneStep(running, running.current_step, currentInput, priorOutputs, baseUrl);
-  } finally {
-    liveProgress.clearRun(runId);
-  }
+    liveProgress.resetRun(runId);
+    try {
+      return await advanceOneStep(running, running.current_step, currentInput, priorOutputs, baseUrl);
+    } finally {
+      liveProgress.clearRun(runId);
+    }
+  });
 }
 
 /** Every completed task_run for a run, as the `priorOutputs` map plus the most recent one — shared by resumeRun/continueRun. */

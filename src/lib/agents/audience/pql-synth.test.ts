@@ -6,6 +6,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 const { callMcpTool } = vi.hoisted(() => ({ callMcpTool: vi.fn() }));
 vi.mock("@/lib/mcp-client", () => ({ callMcpTool }));
 
+// Mock the DB query behind findPriorTaskRun (idempotent-write.ts), so
+// createSegmentFromPql's idempotency guard is deterministic instead of
+// depending on whether a real DATABASE_URL happens to be set in the test env.
+const { queryMock } = vi.hoisted(() => ({ queryMock: vi.fn() }));
+vi.mock("@/lib/db", () => ({ query: queryMock }));
+
 import {
   synthesizePql,
   verifyFields,
@@ -156,18 +162,22 @@ describe("createSegmentFromPql - writes only from a verified expression, honest 
     unverifiedFields: [],
   };
 
-  beforeEach(() => callMcpTool.mockReset());
+  beforeEach(() => {
+    callMcpTool.mockReset();
+    queryMock.mockReset();
+    queryMock.mockResolvedValue([]); // no prior task_run, by default
+  });
 
   it("refuses when handed an unsynthesized result (belt-and-suspenders guard)", async () => {
     const notSynth: PqlSynthesis = { ...verified, synthesized: false, pql: null };
-    const r = await createSegmentFromPql("audience_creation", notSynth, "X");
+    const r = await createSegmentFromPql("run-1", "audience_creation", notSynth, "X");
     expect(r.attempted).toBe(false);
     expect(callMcpTool).not.toHaveBeenCalled();
   });
 
   it("creates and returns the id when the tool succeeds", async () => {
     callMcpTool.mockResolvedValue({ id: "seg-123" });
-    const r = await createSegmentFromPql("audience_creation", verified, "Fall Save");
+    const r = await createSegmentFromPql("run-1", "audience_creation", verified, "Fall Save");
     expect(r).toMatchObject({ attempted: true, created: true, segmentId: "seg-123" });
     expect(callMcpTool).toHaveBeenCalledWith(
       "audience_creation",
@@ -183,7 +193,28 @@ describe("createSegmentFromPql - writes only from a verified expression, honest 
 
   it("reports created:false when the tool returns no id", async () => {
     callMcpTool.mockResolvedValue({});
-    const r = await createSegmentFromPql("audience_creation", verified, "Fall Save");
+    const r = await createSegmentFromPql("run-1", "audience_creation", verified, "Fall Save");
     expect(r).toMatchObject({ attempted: true, created: false });
+  });
+
+  it("reuses a prior successful create for this run instead of creating a duplicate", async () => {
+    queryMock.mockResolvedValue([
+      {
+        status: "completed",
+        output: {
+          segmentCreation: {
+            attempted: true,
+            created: true,
+            segmentId: "seg-existing",
+            name: "Fall Save",
+            pql: verified.pql,
+          },
+        },
+        metadata: null,
+      },
+    ]);
+    const r = await createSegmentFromPql("run-1", "audience_creation", verified, "Fall Save");
+    expect(r).toMatchObject({ attempted: true, created: true, segmentId: "seg-existing", reused: true });
+    expect(callMcpTool).not.toHaveBeenCalled();
   });
 });

@@ -31,7 +31,7 @@
 
 import { CAMPAIGN_BRIEF_FIELDS, fieldByKey } from "@/lib/agents/shared/campaign-brief";
 import { parseBrief, type ParsedIntake, type Provenance } from "./parse";
-import { getLlmClient, type LlmClient } from "@/lib/llm";
+import { resolveLlmClient, type LlmClient } from "@/lib/llm";
 
 export type ExtractionSource = "llm" | "deterministic";
 
@@ -69,10 +69,11 @@ function fieldGuide(): string {
 const SYSTEM = [
   "You extract structured campaign-brief fields from a marketer's freeform brief.",
   "You never invent facts. If the brief does not state or clearly imply a field, omit it entirely.",
-  "For each field you DO return, label its provenance honestly:",
-  '  "stated"   = the brief says it explicitly;',
-  '  "derived"  = a direct, low-risk transformation of what it says (e.g. a bare month from a date phrase);',
-  '  "inferred" = a reasonable inference that a human should confirm.',
+  "For each field you DO return, label its provenance honestly - evaluators check this field specifically, so be strict:",
+  '  "stated"   = the exact allowed value, or unmistakably the same words, appears in the brief. Test: can you point to the words in the brief that ARE the value, not words that merely imply or map onto it?',
+  '  "derived"  = a direct, low-risk transformation of literal text (e.g. a bare month parsed out of a date phrase).',
+  '  "inferred" = you had to map, categorize, or infer the value from a description or a paraphrase rather than from the option text itself.',
+  "COMMON MISTAKE, DO NOT MAKE IT: mapping a description onto an allowed option is NOT \"stated\", even when the mapping is obviously correct. \"existing Xfinity Internet customers\" never uses the words \"Subscriber - Existing Customers\" - so customer_type from that phrase is \"inferred\", not \"stated\", no matter how confident you are. Likewise \"Xfinity Residential\" never uses the words \"Residential (RES)\" - line_of_business from that phrase is also \"inferred\". Reserve \"stated\" for when the brief's own wording already matches the option, not when you correctly guessed which option it means.",
   "When a field has allowed values, map to the closest allowed value verbatim, or omit if none fits.",
   "Respect negations: 'no direct mail' means Direct Mail is NOT a channel.",
   "Return ONLY a JSON object, no prose.",
@@ -165,16 +166,21 @@ export function toKnownFields(raw: RawExtraction[]): {
 export async function extractFromAnswer(
   answerText: string,
   pendingQuestions: Array<{ key: string; label: string }>,
-  client: LlmClient | null = getLlmClient(),
+  client?: LlmClient | null,
 ): Promise<{ known: Record<string, string>; source: ExtractionSource; model: string | null }> {
   const text = String(answerText || "").trim();
-  if (!client || !text) return { known: {}, source: "deterministic", model: null };
+  const { client: resolvedClient } = resolveLlmClient(client);
+  // A misconfigured provider falls back exactly like an absent one here -
+  // this enrichment is best-effort by contract, so there is no fallbackReason
+  // to surface it through; see resolveLlmClient's docstring for why it can't
+  // simply throw.
+  if (!resolvedClient || !text) return { known: {}, source: "deterministic", model: null };
   try {
     const pending = pendingQuestions.length
       ? `The marketer was asked about: ${pendingQuestions.map((q) => `${q.key} (${q.label})`).join(", ")}. ` +
         "Map their reply to those first, but ALSO capture any other listed field the reply happens to state or imply."
       : "Capture any listed field the reply states or implies.";
-    const completion = await client.complete({
+    const completion = await resolvedClient.complete({
       system: SYSTEM,
       prompt: [
         "The marketer replied to a follow-up question. Extract every campaign-brief field their reply supports.",
@@ -202,34 +208,48 @@ export async function extractFromAnswer(
 export async function extractIntake(
   brief: string,
   known: Record<string, unknown> = {},
-  client: LlmClient | null = getLlmClient(),
+  client?: LlmClient | null,
 ): Promise<LlmExtractionResult> {
-  // No LLM configured: the app's original behaviour, unchanged.
-  if (!client) {
+  const { client: resolvedClient, configError } = resolveLlmClient(client);
+
+  // No LLM configured, or configured but misconfigured (bad/missing
+  // credentials): the app's original behaviour, unchanged either way - this
+  // function's whole contract is "the LLM can only ADD, never block a run".
+  // See resolveLlmClient's docstring for why a misconfigured provider must
+  // land here rather than throwing past this function's own try/catch.
+  if (!resolvedClient) {
     return {
       parsed: parseBrief(brief, known),
       source: "deterministic",
       model: null,
       usage: null,
-      fallbackReason: null,
+      fallbackReason: configError ? `LLM misconfigured (${configError}); used the deterministic parser.` : null,
     };
   }
 
   try {
-    const completion = await client.complete({
+    const completion = await resolvedClient.complete({
       system: SYSTEM,
       prompt: buildPrompt(brief),
       temperature: 0,
       maxTokens: 1536,
     });
     const raw = parseExtractionResponse(completion.text);
-    const { known: llmKnown } = toKnownFields(raw);
+    const { known: llmKnown, provenance: llmProvenance } = toKnownFields(raw);
 
     // Caller-supplied `known` (confirmed rework answers) must not be overridden
     // by the model - layer them on top. parseBrief then re-derives everything
     // (missing/inferred/questions) from the merged, validated field set, so all
     // downstream invariants hold exactly as in the pure path.
     const merged = { ...llmKnown, ...(known as Record<string, string>) };
+
+    // The model's own provenance label travels with its extraction - an
+    // "inferred" field must still read as inferred downstream, never silently
+    // promoted to "stated" just because it passed through `known`. A
+    // caller-supplied field (a rework answer the marketer actually typed)
+    // always wins as "stated", since it is confirmed fact, not a guess.
+    const provenance: Record<string, Provenance> = { ...llmProvenance };
+    for (const key of Object.keys(known)) provenance[key] = "stated";
 
     // Nothing usable came back: fall back rather than proceed on an empty read.
     if (Object.keys(llmKnown).length === 0) {
@@ -243,7 +263,7 @@ export async function extractIntake(
     }
 
     return {
-      parsed: parseBrief(brief, merged),
+      parsed: parseBrief(brief, merged, provenance),
       source: "llm",
       model: completion.model,
       usage: completion.usage,

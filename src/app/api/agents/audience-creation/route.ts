@@ -129,6 +129,8 @@ function formatActivationMessage(activation: ActivationOutcome): string {
       return `Created a new dataflow to "${activation.destinationName}" (${activation.dataflowId}) and activated this audience to it.`;
     case "create_failed":
       return `Could not create a dataflow to "${activation.destinationName}": ${activation.reason}`;
+    case "lookup_failed":
+      return `Could not verify activation status for "${activation.destinationName}": ${activation.reason}`;
   }
 }
 
@@ -188,11 +190,46 @@ async function attributeRequestState(
   };
 }
 
+/**
+ * The route contract (README.md / types.ts) is "always return {status,
+ * output?, message?, metadata?}" - never an HTTP error - so a failure is
+ * something the orchestrator can record and a human can read, not an opaque
+ * transport error. Everything this agent does lives in handlePost; this
+ * just guarantees that contract holds even when handlePost throws something
+ * unanticipated - without it, orchestrator.ts's callAgent can only record
+ * "HTTP 500: " with no message, no output, no metadata anywhere. This is
+ * not hypothetical: a live run (see task_run for audience_creation, run
+ * 19fefa88…) hit exactly this - a raw 500 with an empty body and nothing
+ * recorded anywhere about why.
+ */
 export async function POST(req: NextRequest) {
+  try {
+    return await handlePost(req);
+  } catch (err) {
+    return NextResponse.json<AgentResponse>({
+      status: "failed",
+      message: `Audience Creation crashed unexpectedly: ${(err as Error).message}`,
+    });
+  }
+}
+
+async function handlePost(req: NextRequest) {
   const body = (await req.json()) as AgentRequest<AudienceCreationInput>;
   const input = body.input || {};
   const fields = ((input.intakeFields || input.fields || {}) as Record<string, string>) || {};
   const brief = typeof input.brief === "string" ? input.brief : undefined;
+  // Intake's own `inferred` list (parse.ts's ExtractedField[], carried
+  // forward untouched through Review's `...input` spread - see
+  // review/route.ts) - which of the chained fields were a GUESS rather than
+  // something the marketer actually said. Used below so an LLM-inferred
+  // `destination` (never confirmed by a human) cannot pass for the explicit
+  // activation command resolveActivationIntent otherwise treats any
+  // non-empty field value as.
+  const inferredFieldKeys = new Set(
+    (Array.isArray(input.inferred) ? (input.inferred as Array<{ key?: unknown }>) : [])
+      .map((f) => (typeof f?.key === "string" ? f.key : ""))
+      .filter(Boolean),
+  );
 
   // Every read below (probeSchemas, findExistingSegment) calls MCP tools -
   // wrapped so every call, request and response, ends up in
@@ -287,6 +324,7 @@ export async function POST(req: NextRequest) {
     const segmentCreation: SegmentCreation | null =
       pqlSynthesis?.synthesized && segmentCreationEnabled()
         ? await createSegmentFromPql(
+            body.runId,
             "audience_creation",
             pqlSynthesis,
             [fields.campaign_name, fields.audience_description].filter(Boolean).map(String).join(" — ") ||
@@ -322,8 +360,13 @@ export async function POST(req: NextRequest) {
 
     // Off by default - see this file's docstring and activation.ts. Only
     // runs the destination check/write when intake's own `destination`
-    // field (or, for older runs, the brief's free text) names a real one.
-    const activationIntent = resolveActivationIntent(brief, fields.destination);
+    // field (or, for older runs, the brief's free text) names a real one -
+    // and only when that field was actually STATED, not guessed. An
+    // inferred destination is treated as absent here, which falls back to
+    // detectActivationIntent's stricter explicit-verb brief parsing rather
+    // than trusting a value nobody confirmed as an activation command.
+    const destinationField = inferredFieldKeys.has("destination") ? undefined : fields.destination;
+    const activationIntent = resolveActivationIntent(brief, destinationField);
     const activation = activationIntent.requested
       ? await activateAudience("audience_creation", {
           segmentId: existing.id,

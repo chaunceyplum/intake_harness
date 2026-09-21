@@ -23,6 +23,7 @@ import { query } from "@/lib/db";
 
 export interface PriorTaskRun<TOutput = unknown> {
   status: string;
+  input: unknown;
   output: TOutput | null;
   metadata: Record<string, unknown> | null;
 }
@@ -33,6 +34,13 @@ export interface PriorTaskRun<TOutput = unknown> {
  * recur at different indices only in principle - Intake, for example, is
  * always step 0, so its own caller omits this). `null` when none matches, or
  * when the lookup itself failed.
+ *
+ * `input` travels with the row specifically so a caller guarding a per-step
+ * write (orchestrator.ts's Workfront-comment post) can tell a genuine
+ * crash-retry of THIS invocation (identical input) from a second, distinct
+ * round that happens to land on the same run/task/step/status - Intake's
+ * needs_input loop re-enters at the same step_index every round, and two
+ * different rounds are not the same event just because both paused.
  */
 export async function findPriorTaskRun<TOutput = unknown>(
   runId: string,
@@ -43,10 +51,10 @@ export async function findPriorTaskRun<TOutput = unknown>(
   try {
     const rows = await query<PriorTaskRun<TOutput>>(
       stepIndex === undefined
-        ? `SELECT status, output, metadata FROM task_runs
+        ? `SELECT status, input, output, metadata FROM task_runs
            WHERE run_id = $1 AND task_id = $2 AND status = ANY($3::text[])
            ORDER BY task_run_id DESC LIMIT 1`
-        : `SELECT status, output, metadata FROM task_runs
+        : `SELECT status, input, output, metadata FROM task_runs
            WHERE run_id = $1 AND task_id = $2 AND status = ANY($3::text[]) AND step_index = $4
            ORDER BY task_run_id DESC LIMIT 1`,
       stepIndex === undefined ? [runId, taskId, statuses] : [runId, taskId, statuses, stepIndex],

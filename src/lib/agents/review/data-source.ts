@@ -42,6 +42,25 @@ const DATA_SOURCE_LABEL = "Where the targeting data lives";
 const FAC_SIGNAL = /\bfac\b|federated|data warehouse|snowflake|offline only/i;
 const PROSPECT_SIGNAL = /prospect|non-?customer/i;
 
+/**
+ * Only the fields that actually SAY something about where the data lives or
+ * who the audience is - never every field on the form.
+ *
+ * THE BUG THIS AVOIDS: this used to join every field's value indiscriminately
+ * (Object.values(fields).join(" ")), so FAC_SIGNAL's bare `snowflake` matched
+ * a campaign literally named "Snowflake Days Renewal Push" and auto-resolved
+ * the source to FAC with zero real evidence - for an audience that had
+ * nothing to do with a data warehouse. `campaign_name`, `offer`, `channels`,
+ * and the rest of the form have no bearing on this question; scanning them
+ * only manufactures false positives this module's own "FAIL CLOSED" docstring
+ * exists to prevent.
+ */
+const DATA_SOURCE_RELEVANT_FIELDS = ["data_location", "data_availability", "audience_description", "customer_type", "exclusion"];
+
+function relevantText(fields: Record<string, string>): string {
+  return DATA_SOURCE_RELEVANT_FIELDS.map((k) => fields?.[k] || "").join(" ").toLowerCase();
+}
+
 export type DataSourceResolution =
   | {
       resolved: true;
@@ -66,7 +85,7 @@ export function resolveDataSource(
   fields: Record<string, string>,
   probe: { schemaProbe: SchemaProbe; neededAttributes: string[] },
 ): DataSourceResolution {
-  const text = Object.values(fields || {}).join(" ").toLowerCase();
+  const text = relevantText(fields || {});
 
   // Decided from the brief itself — the probe can't override an explicit ask.
   if (FAC_SIGNAL.test(text)) {

@@ -44,6 +44,26 @@ describe("resolveDataSource - decided from the brief alone, no probe needed", ()
   });
 });
 
+describe("resolveDataSource - only relevant fields are scanned, never the whole form", () => {
+  it("does not resolve FAC from an unrelated field's incidental word match (a campaign named 'Snowflake Days')", () => {
+    const r = resolveDataSource(
+      {
+        campaign_name: "Snowflake Days Renewal Push",
+        customer_type: "Subscriber - Existing Customers",
+        line_of_business: "Residential (RES)",
+      },
+      {
+        schemaProbe: probe({ conclusive: true, found: { line_of_business: true }, evidence: ["lineOfBusiness"] }),
+        neededAttributes: ["line_of_business"],
+      },
+    );
+    // "snowflake" only appears in campaign_name, which is not scanned - the
+    // probe evidence is what should decide this, landing on profile_store.
+    expect(r.resolved).toBe(true);
+    if (r.resolved) expect(r.source).toBe("profile_store");
+  });
+});
+
 describe("resolveDataSource - the profile-store answer requires positive proof", () => {
   it("every needed attribute present in a profile schema -> profile store, resolved", () => {
     const r = resolveDataSource(

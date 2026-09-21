@@ -112,7 +112,30 @@ function summarise(parsed: ParsedIntake) {
   };
 }
 
+/**
+ * The route contract (README.md / types.ts) is "always return {status,
+ * output?, message?, metadata?}" - never an HTTP error - so the orchestrator
+ * can record a real, readable failure instead of an opaque transport error.
+ * Everything this agent does lives in handlePost; this just guarantees that
+ * contract holds even when handlePost throws something nobody anticipated
+ * (a bad MCP response shape, a null-deref) - without this, an uncaught
+ * exception here becomes Next's default empty-body 500, which
+ * orchestrator.ts's callAgent can only record as "HTTP 500: " with no
+ * message, no output, no metadata anywhere - the exact "black box" this
+ * whole harness exists to avoid.
+ */
 export async function POST(req: NextRequest) {
+  try {
+    return await handlePost(req);
+  } catch (err) {
+    return NextResponse.json<AgentResponse>({
+      status: "failed",
+      message: `Intake crashed unexpectedly: ${(err as Error).message}`,
+    });
+  }
+}
+
+async function handlePost(req: NextRequest) {
   const body = (await req.json()) as AgentRequest<{
     brief?: string;
     loopCount?: number;

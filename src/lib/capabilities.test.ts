@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { getCapabilities } from "./capabilities";
 
-const VARS = ["LLM_PROVIDER", "OLLAMA_HOST", "ANTHROPIC_API_KEY", "AWS_REGION", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "MCP_GATEWAY_URL", "MCP_ENDPOINT_URL"];
+const VARS = ["LLM_PROVIDER", "OLLAMA_HOST", "OLLAMA_MODEL", "ANTHROPIC_API_KEY", "AWS_REGION", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "MCP_GATEWAY_URL", "MCP_ENDPOINT_URL"];
 afterEach(() => { for (const v of VARS) delete process.env[v]; });
 
 describe("getCapabilities - the LLM block", () => {
@@ -32,5 +32,13 @@ describe("getCapabilities - the LLM block", () => {
     const cap = await getCapabilities();
     expect(cap.llm).toMatchObject({ configured: true, provider: "ollama", reachable: false });
     expect(cap.llm.note).toMatch(/OLLAMA_HOST is not set/);
+  });
+
+  it("flags ollama configured with a host but no model, rather than reporting reachable", async () => {
+    process.env.LLM_PROVIDER = "ollama";
+    process.env.OLLAMA_HOST = "10.0.0.5"; // no OLLAMA_MODEL - getLlmClient() requires it too
+    const cap = await getCapabilities();
+    expect(cap.llm).toMatchObject({ configured: true, provider: "ollama", reachable: false });
+    expect(cap.llm.note).toMatch(/OLLAMA_MODEL is not set/);
   });
 });

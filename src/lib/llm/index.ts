@@ -92,6 +92,32 @@ export function isLlmConfigured(): boolean {
 }
 
 /**
+ * Resolve an optionally-injected client for a "prefer the LLM, always fall
+ * back" caller (llm-extract.ts, llm-triage.ts, pql-synth.ts).
+ *
+ * WHY THIS EXISTS, NOT JUST `client = getLlmClient()`: a default parameter
+ * is evaluated eagerly, at the call site, BEFORE the function body - and
+ * therefore before that function's own try/catch can see it. getLlmClient()
+ * deliberately THROWS (not null) for a provider that is set but misconfigured
+ * (missing key/host - see its own docstring). Every one of those callers
+ * documents "no LLM / a transport error / bad JSON -> deterministic fallback,
+ * never blocks the run" - but a thrown LlmConfigError from a default param
+ * bypasses that fallback entirely and fails the run outright. Resolving here,
+ * inside the caller's own async body, brings the same throw inside its
+ * try/catch instead.
+ */
+export function resolveLlmClient(
+  client?: LlmClient | null,
+): { client: LlmClient | null; configError: string | null } {
+  if (client !== undefined) return { client, configError: null };
+  try {
+    return { client: getLlmClient(), configError: null };
+  } catch (err) {
+    return { client: null, configError: (err as Error).message };
+  }
+}
+
+/**
  * Wrap a client so every completion is TRACED into the same tool-call log/live
  * view MCP calls use (see traceExternalCall) - duration, prompt size, model,
  * token usage, and any error, all visible in the run trace with no per-call-site

@@ -163,7 +163,27 @@ function preflight(fields: Record<string, string>): TriageResult {
   return triageRejection(reason, fields);
 }
 
+/**
+ * The route contract (README.md / types.ts) is "always return {status,
+ * output?, message?, metadata?}" - never an HTTP error - so a failure is
+ * something the orchestrator can record and a human can read, not an opaque
+ * transport error. Everything this agent does lives in handlePost; this
+ * just guarantees that contract holds even when handlePost throws something
+ * unanticipated - without it, orchestrator.ts's callAgent can only record
+ * "HTTP 500: " with no message, no output, no metadata anywhere.
+ */
 export async function POST(req: NextRequest) {
+  try {
+    return await handlePost(req);
+  } catch (err) {
+    return NextResponse.json<AgentResponse>({
+      status: "failed",
+      message: `Review crashed unexpectedly: ${(err as Error).message}`,
+    });
+  }
+}
+
+async function handlePost(req: NextRequest) {
   const body = (await req.json()) as AgentRequest<ReviewInput>;
   const input = body.input || {};
   const fields = input.intakeFields || input.fields || {};

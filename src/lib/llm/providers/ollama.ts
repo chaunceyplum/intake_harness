@@ -44,7 +44,14 @@ export function normalizeOllamaHost(raw: string): string {
 export function createOllamaClient(cfg: OllamaConfig): LlmClient {
   const base = normalizeOllamaHost(cfg.host);
   const model = cfg.model;
-  const timeoutMs = cfg.timeoutMs ?? 120_000; // local models can be slow
+  // Every caller of this client runs inside an agent route the orchestrator
+  // itself wraps in AGENT_CALL_TIMEOUT_MS (60s - see pipeline/orchestrator.ts).
+  // A local model slower than that would otherwise get its own graceful
+  // "fall back to the deterministic path" try/catch (llm-extract.ts et al.)
+  // preempted by the orchestrator's own fetch aborting first, turning a slow
+  // model into a failed run instead of a fallback. Defaulting under that
+  // ceiling means THIS timeout fires first and the intended fallback runs.
+  const timeoutMs = cfg.timeoutMs ?? 45_000;
 
   return {
     id: `ollama:${model}@${base}`,
@@ -59,7 +66,12 @@ export function createOllamaClient(cfg: OllamaConfig): LlmClient {
           body: JSON.stringify({
             model,
             stream: false,
-            options: { temperature: req.temperature ?? 0 },
+            // num_predict is Ollama's max-output-tokens knob - forwarded so this
+            // provider clamps generation the same way anthropic.ts/bedrock.ts do
+            // (both send max_tokens), instead of letting a local model generate
+            // unboundedly and risk a shape the caller's JSON extraction doesn't
+            // expect (see types.ts's LlmCompletionRequest.maxTokens).
+            options: { temperature: req.temperature ?? 0, ...(req.maxTokens ? { num_predict: req.maxTokens } : {}) },
             messages: [
               ...(req.system ? [{ role: "system", content: req.system }] : []),
               { role: "user", content: req.prompt },
