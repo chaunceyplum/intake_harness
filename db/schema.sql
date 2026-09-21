@@ -181,11 +181,19 @@ ALTER TABLE settings ADD COLUMN IF NOT EXISTS promote_admins TEXT[];
 -- Seed/refresh the task catalog from src/lib/pipeline/registry.ts (PIPELINE
 -- + ESCALATION, i.e. ALL_TASKS). Keep this block in sync with that file —
 -- it's the one place both agree on task_id.
+-- The names the client sees. Kept in sync with src/lib/pipeline/registry.ts,
+-- which is where the behaviour lives - this table is what /api/tasks serves,
+-- so renaming the registry alone changes nothing a reviewer looks at.
+--
+-- owner is NULL deliberately. These rows carried 'Dev 1', 'Dev 2',
+-- 'Dev 3 (you)' and 'Unassigned' from when this was a build plan, and the
+-- Agents screen showed our sprint allocation beside the agent that files a
+-- Comcast request.
 INSERT INTO tasks (task_id, label, owner) VALUES
-    ('intake',            'Agent 1 — Intake',              'Dev 1'),
-    ('review',            'Agent 2 — Review / Triage',     'Dev 2'),
-    ('audience_creation', 'Agent 3 — Audience Creation',   'Dev 3 (you)'),
-    ('escalation',        'Agent 4 — Escalation',          'Unassigned')
+    ('intake',            'Morpheus — Brief Agent',              NULL),
+    ('review',            'The Architect — Validation Agent',    NULL),
+    ('audience_creation', 'Tank — Segmentation Agent',           NULL),
+    ('escalation',        'The Keymaker — Reconciliation Agent', NULL)
 ON CONFLICT (task_id) DO UPDATE SET label = EXCLUDED.label, owner = EXCLUDED.owner;
 
 -- ---------------------------------------------------------------------------

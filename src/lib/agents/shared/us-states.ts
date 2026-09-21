@@ -127,3 +127,41 @@ export function namesAPlace(text: string): boolean {
 export function statePredicate(field: string, state: NamedState): string {
   return `(${field} = "${state.name}" or ${field} = "${state.code}")`;
 }
+
+/**
+ * EVERY state the text names, in the order it names them.
+ *
+ * findState returns the first and stops, which was invisible until a brief
+ * asked for two:
+ *
+ *   "Xfinity Internet customers in New York and New Jersey"
+ *
+ * captured New Jersey alone. Half the requested audience was dropped with
+ * nothing reported - and the audience agent builds its filter from that value,
+ * so the campaign would have gone to one state of the two.
+ *
+ * The first still fills the field. The rest exist so the loss can be SEEN and
+ * asked about, which is the same rule the dates and offers follow.
+ */
+export function findStates(text: string): NamedState[] {
+  const raw = String(text || "");
+  const out: NamedState[] = [];
+  const seen = new Set<string>();
+
+  const hits: Array<{ at: number; state: NamedState }> = [];
+  for (const [name, code] of Object.entries(US_STATES)) {
+    // Word-bounded, so "Washington" does not match inside "Washington Post"
+    // any more or less than findState already allows.
+    const re = new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+    const m = re.exec(raw);
+    if (m) hits.push({ at: m.index, state: { name, code } });
+  }
+
+  hits.sort((a, b) => a.at - b.at);
+  for (const h of hits) {
+    if (seen.has(h.state.code)) continue;
+    seen.add(h.state.code);
+    out.push(h.state);
+  }
+  return out;
+}

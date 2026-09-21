@@ -21,6 +21,7 @@
  */
 
 import { findNamedPlace } from "@/lib/agents/shared/places";
+import { findStates } from "@/lib/agents/shared/us-states";
 import { CAMPAIGN_BRIEF_FIELDS, requiredFields, type FieldSpec } from "@/lib/agents/shared/campaign-brief";
 
 export type Provenance = "stated" | "derived" | "inferred";
@@ -100,6 +101,28 @@ function isNegated(text: string, option: string): boolean {
   return after.test(text);
 }
 
+/**
+ * The brief with its ROW LABELS removed.
+ *
+ * Briefs from this BU arrive as labelled rows - "Business objective:",
+ * "Audience definition:", "Requestor / BU:". A label names the question; the
+ * text after it is the answer. Matching option values against the label is
+ * matching against the form, not against what the marketer said.
+ *
+ * It produced a confidently wrong value on a real brief. `matchOption` strips
+ * the qualifier off "Business (SMB)", leaving the bare word "business" as the
+ * needle, and the brief's own label "Business objective:" matched it. A
+ * residential Xfinity campaign was filed as Business (SMB) with no SMB signal
+ * anywhere in it - and any brief using the ordinary word "business" in a label
+ * would do the same.
+ *
+ * Only a LABEL is removed: short, at the start of a line, ending in a colon.
+ * A colon mid-sentence is punctuation and is left alone.
+ */
+function withoutLabels(text: string): string {
+  return String(text || "").replace(/^[ \t]*[A-Za-z][A-Za-z0-9 /&()'-]{0,44}:[ \t]*/gm, "");
+}
+
 /** Longest option first, so "TV/Streaming" beats "TV". */
 function matchOption(text: string, options: readonly string[]): string | null {
   const hay = lower(text);
@@ -116,7 +139,12 @@ function matchOption(text: string, options: readonly string[]): string | null {
 const CUES: Array<{ key: string; value: string; from: Provenance; cues: RegExp }> = [
   // "who do not have a mobile line with us yet" is an upsell, written the way a
   // marketer writes it - by describing the gap rather than naming the motion.
-  { key: "business_objective", value: "Growth/Upsell", from: "inferred", cues: /\bupsell\b|\bup-sell\b|\bupgrade path\b|\bgrow(th)? revenue\b|\bcross-?sell\b|\b(do not|don't|dont) (yet )?have\b[^.]{0,30}\b(line|service|product)\b|\badd (a )?(mobile|line)\b/i },
+  /*
+   * "Attach rate" is how Comcast writes upsell, and the first demo brief -
+   * "grow video attach rate among single-product internet subscribers" - had
+   * to be asked what its objective was. It says so in its opening line.
+   */
+  { key: "business_objective", value: "Growth/Upsell", from: "inferred", cues: /\bupsell\b|\bup-sell\b|\battach rate\b|\bvideo attach\b|\bsingle[- ]product\b|\bupgrade path\b|\bgrow(th)? revenue\b|\bcross-?sell\b|\b(do not|don't|dont) (yet )?have\b[^.]{0,30}\b(line|service|product)\b|\badd (a )?(mobile|line)\b/i },
   { key: "business_objective", value: "Retention", from: "inferred", cues: /\bretention|retain|churn|renewal\b/i },
   { key: "business_objective", value: "Acquisition", from: "inferred", cues: /\bacquisition|acquire|prospect|new customer\b/i },
   // "our existing Xfinity internet customers" - the words between "existing"
@@ -261,8 +289,26 @@ function findLaunchDates(brief: string): ExtractedField[] {
      * Clauses are what separate the two facts in that sentence, so the search
      * stops at the punctuation that ends the previous one.
      */
+    /*
+     * A clause ends at a conjunction as well as at punctuation.
+     *
+     * Splitting only on commas meant "sign-off due 6 October and in market 20
+     * October" - no comma anywhere - was one clause containing "due", so BOTH
+     * dates were discarded and the launch date vanished along with the
+     * deadline. The qualifier belongs to its own clause, and "and" starts a
+     * new one just as firmly as a comma does.
+     */
     const before = text.slice(0, h.at);
-    const clause = before.slice(Math.max(0, before.lastIndexOf(",") + 1, before.lastIndexOf(";") + 1));
+    const boundary = Math.max(
+      before.lastIndexOf(","),
+      before.lastIndexOf(";"),
+      before.lastIndexOf(":"),
+      (() => {
+        const m = before.match(/\b(?:and|then|with|plus)\b(?!.*\b(?:and|then|with|plus)\b)/i);
+        return m && m.index != null ? m.index + m[0].length : -1;
+      })(),
+    );
+    const clause = before.slice(boundary + 1);
     if (OTHER_KIND_OF_DATE.test(clause)) continue;
     add(h.day, h.month, h.evidence);
   }
@@ -458,6 +504,13 @@ function channelSense(brief: string, option: string): boolean {
 }
 
 export function parseBrief(brief: string, known: Record<string, unknown> = {}): ParsedIntake {
+  /*
+   * Values are matched against the ANSWERS, not against the row labels.
+   * See withoutLabels: a residential campaign was filed as Business (SMB)
+   * because the label "Business objective:" matched the option value.
+   */
+  const answers = withoutLabels(brief);
+
   const extracted: ExtractedField[] = [];
   const seen = new Set<string>();
 
@@ -548,7 +601,7 @@ export function parseBrief(brief: string, known: Record<string, unknown> = {}): 
       }
     }
 
-    const hit = matchOption(brief, spec.options);
+    const hit = matchOption(answers, spec.options);
     if (hit) {
       push({
         key: spec.key, label: spec.label, value: hit, from: "stated",
@@ -582,23 +635,75 @@ export function parseBrief(brief: string, known: Record<string, unknown> = {}): 
    * Stated, not inferred: the marketer wrote the place's name.
    */
   if (!seen.has("region")) {
-    const place = findNamedPlace(brief);
-    if (place) {
-      const spec = CAMPAIGN_BRIEF_FIELDS.find((f: FieldSpec) => f.key === "region");
+    const spec = CAMPAIGN_BRIEF_FIELDS.find((f: FieldSpec) => f.key === "region");
+
+    /*
+     * EVERY STATE, NOT THE FIRST.
+     *
+     * "Xfinity Internet customers in New York and New Jersey" captured New
+     * Jersey alone. Half the requested audience was dropped with nothing
+     * reported - and the audience agent builds its filter from this value, so
+     * the campaign would have gone to one state of the two.
+     *
+     * The first still fills the field; the rest are recorded, so the loss
+     * becomes a question instead of a silent halving. Same rule as the dates
+     * and the offers.
+     */
+    const states = findStates(brief);
+    if (states.length > 1 && /\b(?:both|and|&|plus|as well as)\b/i.test(brief)) {
+      /*
+       * "BOTH NEW YORK AND NEW JERSEY" IS ONE ANSWER, NOT TWO RIVALS.
+       *
+       * Recording every state as a separate candidate fixed the silent
+       * halving and immediately created a worse bug: the conflict check saw
+       * two values for one field and asked
+       *
+       *   "The brief gives region / market twice: 'New York' and 'New
+       *    Jersey'. Which one is right?"
+       *
+       * on a brief that says, in as many words, that it wants both. That is
+       * confidently wrong in a polite voice, which is harder to catch than a
+       * gap - the marketer has to argue with it.
+       *
+       * Conjoined states are one multi-state market. The field still receives
+       * a single value, the widening maps it to the country the form can
+       * hold, and both states stay visible in the value itself.
+       */
       push({
         key: "region",
         label: spec?.label ?? "Region / market",
-        value: place.name,
+        value: states.map((s) => s.name).join(", "),
         from: "stated",
-        evidence: place.name,
+        evidence: states.map((s) => s.name).join(" and "),
       });
+    } else if (states.length) {
+      for (const s of states) {
+        push({
+          key: "region",
+          label: spec?.label ?? "Region / market",
+          value: s.name,
+          from: "stated",
+          evidence: s.name,
+        });
+      }
+    } else {
+      const place = findNamedPlace(brief);
+      if (place) {
+        push({
+          key: "region",
+          label: spec?.label ?? "Region / market",
+          value: place.name,
+          from: "stated",
+          evidence: place.name,
+        });
+      }
     }
   }
 
   // 3. Cue phrases. These are inferences and are marked as such.
   for (const cue of CUES) {
     if (seen.has(cue.key)) continue;
-    const m = brief.match(cue.cues);
+    const m = answers.match(cue.cues);
     if (m) {
       const spec = CAMPAIGN_BRIEF_FIELDS.find((f: FieldSpec) => f.key === cue.key);
       push({
@@ -609,18 +714,36 @@ export function parseBrief(brief: string, known: Record<string, unknown> = {}): 
   }
 
   // 4. A date written in prose.
-  if (!seen.has("launch_date")) {
-    /*
-     * Every date, not the first. push() keeps the first for the field and
-     * records the rest as candidates, so an amendment becomes a question
-     * instead of vanishing.
-     */
-    for (const d of findLaunchDates(brief)) push(d);
-  }
+  /*
+   * NOT GUARDED ON `seen`, AND THAT IS THE POINT.
+   *
+   * push() already keeps the first value for a field, so a value supplied in
+   * `known` still wins. What the guard used to do was stop the brief from
+   * being READ at all once `known` had an answer - which silently disabled
+   * the amendment check in exactly the case it matters most.
+   *
+   * An LLM extractor now runs in front of this and passes its output back as
+   * `known`. So `known.launch_date` is normally set, the scan never ran, no
+   * candidates were recorded, and "pull the date forward to the 6th" stopped
+   * being noticed. The deterministic parser is the safety net under that
+   * extractor, and a safety net that switches itself off when the thing above
+   * it is working is not a safety net.
+   *
+   * Reading the brief is cheap. Reading it and finding the same answer costs
+   * nothing; reading it and finding a different one is the whole point.
+   */
+  for (const d of findLaunchDates(brief)) push(d);
 
   // 5. The campaign name, from the opening line.
   if (!seen.has("campaign_name")) {
-    const n = findCampaignName(brief);
+    /*
+     * The ANSWERS, not the labels. On a labelled brief with no campaign-name
+     * row, the opening line is the requestor - so the Workfront request was
+     * titled "Requestor / BU: Video & Entertainment Marketing", which is a
+     * team, not a campaign. Stripping labels first means the derivation sees
+     * what the marketer wrote rather than the form's own headings.
+     */
+    const n = findCampaignName(answers);
     if (n) push(n);
   }
 
@@ -687,7 +810,13 @@ export function parseBrief(brief: string, known: Record<string, unknown> = {}): 
    * is introduced as money the business is SPENDING, it is not something the
    * customer is being given.
    */
-  if (!seen.has("offer")) {
+  /*
+   * Every sum, and again NOT guarded on `seen`. An LLM extractor supplying
+   * `known.offer` used to stop the brief being read for money at all, so a
+   * changed offer went unnoticed - and the budget-versus-offer distinction
+   * was never applied to what the brief actually said.
+   */
+  {
     /*
      * THE WHOLE OFFER, NOT THE FIRST NUMBER IN IT.
      *
@@ -733,34 +862,124 @@ export function parseBrief(brief: string, known: Record<string, unknown> = {}): 
     }
   }
 
+  /*
+   * 5c. THE AUDIENCE, AS THE REQUESTER DEFINED IT.
+   *
+   * THE MOST IMPORTANT LINE IN THE BRIEF, AND IT WAS READ BY NOTHING.
+   *
+   * A real brief said, on its own labelled row:
+   *
+   *     Audience definition: xfinityInternet = true AND xfinityTV = false
+   *
+   * Nothing captured it. The audience agent inferred a different audience from
+   * the surrounding prose, built the inverse - Internet = FALSE, TV condition
+   * dropped entirely - reported success, and attached a predicted count of 22
+   * to a population nobody had asked for.
+   *
+   * When a CDP-literate requester writes the rule themselves, that is the most
+   * reliable input this pipeline will ever receive. Capturing it verbatim lets
+   * the audience agent use it instead of guessing, and lets a reviewer see the
+   * requester's own words next to what was built.
+   *
+   * Captured as STATED, because it is: they wrote it, we did not derive it.
+   */
+  if (!seen.has("audience_description")) {
+    const ad = brief.match(
+      /\b(?:audience(?:\s+definition)?|segment(?:\s+definition)?|targeting)\b\s*[:\-]\s*([^\n]{5,200})/i,
+    );
+    if (ad && ad[1]) {
+      const spec = CAMPAIGN_BRIEF_FIELDS.find((f: FieldSpec) => f.key === "audience_description");
+      push({
+        key: "audience_description",
+        label: spec?.label ?? "Audience",
+        value: ad[1].trim().replace(/\s+/g, " ").replace(/[.;]+$/, ""),
+        from: "stated",
+        evidence: ad[0].trim().slice(0, 120),
+      });
+    }
+  }
+
+  /*
+   * 6b. THE SUCCESS METRICS.
+   *
+   * All three demo briefs state them - "video add-on conversion rate and
+   * incremental ARPU", "referral submissions per thousand sent", "churn rate
+   * delta versus a matched control" - and none were captured. The tenant's
+   * form has a field called "Key Objectives & Success Metrics", and we were
+   * filling it with the business objective alone, dropping the half the
+   * marketer actually took the trouble to write.
+   *
+   * How a campaign will be judged is not decoration. It decides what the
+   * creative has to achieve and what gets reported afterwards.
+   */
+  if (!seen.has("success_metrics")) {
+    const sm = brief.match(
+      /\b(?:success (?:is )?measured on|success metrics?|measured on|kpis?|measured by)\b\s*[:-]?\s*([^.\n\r]{5,160})/i,
+    );
+    if (sm && sm[1]) {
+      push({
+        key: "success_metrics",
+        label: "Success metrics",
+        value: sm[1].trim().replace(/\s+/g, " "),
+        from: "stated",
+        evidence: sm[0].trim(),
+      });
+    }
+  }
+
   // 7. The exclusion - usually the single most important clause in the brief,
   //    and previously left in free text only.
   if (!seen.has("exclusion")) {
     const x = brief.match(
-      /\b(?:who|that)\s+(?:do not|don't|dont|does not|doesn't)\s+(?:yet\s+)?have\s+([^.,]{3,60})|\bwithout\s+(?:a\s+)?([^.,]{3,60})|\bexclud(?:e|ing)\s+([^.,]{3,60})/i,
+      /\b(?:suppress|suppression(?:s)?(?:\s*[:\-])?|exclud(?:e|ing)|omit|leave out|remove)\s+([^.,;\n\r]{3,70})/i,
     );
+
+    /*
+     * A SUPPRESSION AND AN AUDIENCE DEFINITION ARE OPPOSITES, AND THIS READ
+     * ONE AS THE OTHER.
+     *
+     * The pattern used to accept "who do not have X" and "without X" as
+     * exclusions. On the first of the three demo briefs:
+     *
+     *   "Audience is existing Xfinity Internet customers who do not have
+     *    Xfinity TV ... Suppress existing TV subscribers."
+     *
+     * it produced Exclusion = "Customers without Xfinity TV" - the audience's
+     * own defining clause, filed as the thing to leave out. Acted on, that
+     * excludes precisely the people being targeted. And the real suppression,
+     * stated plainly one sentence later, was never captured at all.
+     *
+     * "Who do not have X" says who the audience IS. It belongs to the audience
+     * definition, where the segmentation agent already uses it to build
+     * xfinityTV = false. Only language that explicitly removes people -
+     * suppress, exclude, omit, leave out - is a suppression.
+     *
+     * Getting this backwards is not a near-miss. It builds a campaign for the
+     * complement of the requested audience, with a plausible count attached.
+     */
     if (x) {
-      const what = (x[1] || x[2] || x[3] || "").trim().replace(/\s+with us\s*(yet)?$/i, "");
       /*
-       * "exclude anyone who already has X" is ALREADY an exclusion.
+       * Cut at a WORD, not at a character count.
        *
-       * Every branch was prefixed with "Customers without", so
-       * "exclude anyone who already has Xfinity Internet" came out as
-       * "Customers without anyone who already has Xfinity Internet". Only the
-       * "without X" and "do not have X" branches describe what the customer
-       * lacks; the explicit exclude branch describes who to leave out, in the
-       * marketer's own words, and needs no prefix.
+       * The 70-character limit landed mid-word and the fragment was written
+       * to Workfront: "...no point defending someone we". A truncation that
+       * reads as a sentence is worse than an obvious one - nobody queries it.
        */
-      const explicit = Boolean(x[3]);
-      const value = explicit
-        ? what.charAt(0).toUpperCase() + what.slice(1)
-        : `Customers without ${what}`;
+      const cutAtWord = (t: string, max: number) => {
+        if (t.length <= max) return t;
+        const cut = t.slice(0, max);
+        const lastSpace = cut.lastIndexOf(" ");
+        return (lastSpace > max * 0.5 ? cut.slice(0, lastSpace) : cut).replace(/[\s,;-]+$/, "") + "...";
+      };
+      const what = cutAtWord((x[1] || "").trim(), 70)
+        .replace(/\s+with us\s*(yet)?$/i, "")
+        .replace(/^(?:anyone|anybody|any|all|those|people|customers)\s+(?:who\s+)?/i, "");
       if (what) {
         push({
           key: "exclusion",
           label: "Exclusion",
-          value,
-          from: "derived",
+          value: what.charAt(0).toUpperCase() + what.slice(1),
+          from: "stated",
           evidence: x[0].trim(),
         });
       }
@@ -772,9 +991,60 @@ export function parseBrief(brief: string, known: Record<string, unknown> = {}): 
 
   const missing = requiredFields().filter((f: FieldSpec) => !fields[f.key]);
   const inferred = extracted.filter((f) => f.from !== "stated");
-  const conflicts = findConflicts(candidates, fields);
+  const conflicts = findConflicts(candidates, fields, brief);
 
   return { fields, extracted, missing, inferred, conflicts };
+}
+
+/*
+ * Months are proper nouns and are not places. Without this, "in January" reads
+ * as a named market and every dated brief grows a spurious geography question.
+ */
+const NOT_A_PLACE =
+  /^(January|February|March|April|May|June|July|August|September|October|November|December|Q[1-4]|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|Xfinity|Comcast|Workfront|Email|SMS)$/i;
+
+/**
+ * The brief named a specific market AND a broad one.
+ *
+ * A marketer asked for Boise and the Treasure Valley with a national digital
+ * layer over the top, and the request was filed as "National" - her actual
+ * primary ask silently gone, with nothing asked and nothing flagged. The broad
+ * option wins because the option list is matched before any place is looked
+ * for, and "National" is one of the options.
+ *
+ * We cannot map a city to this tenant's region field, and should not pretend
+ * to. But losing the marketer's own words without a word is the failure; being
+ * unable to file them is not. So it asks.
+ */
+function findBroadAndSpecificPlace(brief: string, region: string): Conflict | null {
+  const BROAD = /^(National|Northeast|Southeast|Midwest|Southwest|West)$/i;
+  if (!region || !BROAD.test(region.trim())) return null;
+
+  /*
+   * A place name is usually more than one word, and cutting it at the first
+   * produced nonsense: "in New York" was reported as the market "New", so the
+   * question read 'The brief names "New" and also reads as national'.
+   *
+   * Up to two further capitalised words are taken, which covers New York,
+   * Treasure Valley, Salt Lake City and the Bay Area without running off into
+   * the rest of the sentence.
+   */
+  const locative = /\b(?:in|around|across|within|near|throughout|serving|covering)\s+(?:the\s+)?([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+){0,2})/g;
+  for (const m of brief.matchAll(locative)) {
+    const name = (m[1] || "").trim();
+    if (!name || NOT_A_PLACE.test(name)) continue;
+    if (name.toLowerCase() === region.toLowerCase()) continue;
+    return {
+      key: "region",
+      label: "Region / market",
+      values: [name, region],
+      ask:
+        `The brief names "${name}" and also reads as ${region.toLowerCase()}. ` +
+        `Which is the primary market? I have used "${region}", and this form has no field for a ` +
+        `market as specific as "${name}", so if that is the real target it needs saying explicitly.`,
+    };
+  }
+  return null;
 }
 
 /**
@@ -805,6 +1075,7 @@ export function parseBrief(brief: string, known: Record<string, unknown> = {}): 
 function findConflicts(
   candidates: Map<string, ExtractedField[]>,
   fields: Record<string, string>,
+  brief: string,
 ): Conflict[] {
   const out: Conflict[] = [];
   const norm = (s: string) => String(s || "").toLowerCase().replace(/\s+/g, " ").trim();
@@ -852,6 +1123,9 @@ function findConflicts(
         "Which is it? Prospects and existing customers are built from different places, so it changes the whole build.",
     });
   }
+
+  const place = findBroadAndSpecificPlace(brief, fields.region || "");
+  if (place) out.push(place);
 
   return out;
 }

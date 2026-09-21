@@ -384,7 +384,75 @@ export type Expression = {
  * is the one failure mode worse than no segment: it produces a plausible number
  * for the wrong population, and 3.4 sends that number to the marketer.
  */
+/**
+ * The brief stated the audience as an expression. Use it.
+ *
+ * A real brief said, on its own line:
+ *
+ *     Audience definition: xfinityInternet = true AND xfinityTV = false
+ *
+ * and the pipeline inferred a different audience from the surrounding prose,
+ * because nothing ever looked for the sentence that answered the question
+ * outright. When a CDP-literate requester writes the rule themselves, that is
+ * the most reliable input this agent will ever get, and guessing around it is
+ * indefensible.
+ *
+ * Only attribute names the sandbox actually returned are accepted. An
+ * expression naming a field that does not exist is NOT quietly dropped - it
+ * returns null so the caller falls back to inference and, failing that,
+ * reports the audience as unbuildable rather than building a partial one.
+ */
+export function expressionFromBrief(
+  check: AttributeCheck,
+  fields: Record<string, string>,
+): Expression | null {
+  const text = Object.values(fields).join(" ");
+  const known: string[] = [];
+  for (const s of check.satisfied) for (const f of s.allFields ?? []) known.push(f);
+  if (!known.length) return null;
+
+  // `name = true`, `name != null`, `name = "x"` - joined by and/AND.
+  const clause = /([A-Za-z_][A-Za-z0-9_.]*)\s*(=|!=|==)\s*("[^"]*"|'[^']*'|true|false|null|[A-Za-z0-9_]+)/g;
+  const predicates: string[] = [];
+  const explain: string[] = [];
+
+  for (const m of text.matchAll(clause)) {
+    const [, rawName, op, rawValue] = m;
+    // Match the brief's short name against the real field path, either way round.
+    const field = known.find((f) => norm(f).endsWith(norm(rawName)) || norm(rawName).endsWith(norm(f)));
+    if (!field) return null;
+
+    const value = rawValue.replace(/^['"]|['"]$/g, "");
+    const operator = op === "==" ? "=" : op;
+    const literal = /^(true|false|null)$/i.test(value) ? value.toLowerCase() : `"${value}"`;
+
+    predicates.push(`${field} ${operator} ${literal}`);
+    explain.push(
+      literal === "true" ? `holds ${rawName} (${field} = true)`
+        : literal === "false" ? `does NOT hold ${rawName} (${field} = false)`
+          : `${rawName} ${operator} ${literal} (${field})`,
+    );
+  }
+
+  if (predicates.length < 2) return null;
+  return {
+    pql: predicates.join(" and "),
+    explain,
+    ungrounded: [],
+  } as Expression;
+}
+
 export function buildExpression(check: AttributeCheck, fields: Record<string, string>): Expression | null {
+  /*
+   * A DEFINITION THE REQUESTER WROTE BEATS ANYTHING WE INFER.
+   *
+   * Checked before the prose is read at all: if the brief says
+   * "xfinityInternet = true AND xfinityTV = false", that IS the audience, and
+   * every heuristic below is a worse answer to a question already answered.
+   */
+  const stated = expressionFromBrief(check, fields);
+  if (stated) return stated;
+
   const all = Object.values(fields).join(" ").toLowerCase();
   const predicates: string[] = [];
   const explain: string[] = [];
@@ -407,17 +475,41 @@ export function buildExpression(check: AttributeCheck, fields: Record<string, st
     const tv = holding("xfinityTV") || holding("tv");
     const internet = holding("xfinityInternet") || holding("internet") || holding("broadband");
 
-    const targetsInternet = /internet|broadband/.test(all);
-    const tvOnly = /tv[- ]only|only have tv|tv only|without internet|no internet|don'?t have internet/.test(all);
+    /*
+     * THIS ONLY UNDERSTOOD ONE DIRECTION OF UPSELL, AND GUESSED THE OTHER.
+     *
+     * The old test was: does the brief mention internet, and does it say
+     * "TV only"? If both, build has-TV-without-Internet. Otherwise, if
+     * internet was mentioned at ALL, assert `internet = false`.
+     *
+     * That fallback is where a real brief went wrong. "Grow VIDEO attach rate
+     * among single-product INTERNET subscribers" - has Internet, wants TV - is
+     * the mirror image, and it fell into the else-if and came out as
+     *
+     *     xfinityInternet = false and customerEmail != null
+     *
+     * The TV condition gone, the Internet condition inverted, reported
+     * "completed", with a predicted count of 22 attached to it. A different
+     * population from the one requested, wearing a plausible number.
+     *
+     * Both directions are now read explicitly, and an unreadable one builds
+     * NOTHING rather than defaulting to whichever shape was written first.
+     */
+    const lacksTv = /\bno tv\b|without tv|do(?:es)? ?n'?o?t have tv|non-?tv|\btv\s*=\s*false|xfinitytv\s*=\s*false|single[- ]product internet|internet[- ]only/i.test(all);
+    const lacksInternet = /\bno internet\b|without internet|do(?:es)? ?n'?o?t have internet|\binternet\s*=\s*false|xfinityinternet\s*=\s*false|tv[- ]only|only have tv/i.test(all);
 
-    if (targetsInternet && tvOnly && tv && internet) {
+    if (lacksTv && !lacksInternet && tv && internet) {
+      // Video attach: they have Internet, they do not have TV.
+      predicates.push(`${internet} = true`);
+      predicates.push(`${tv} = false`);
+      explain.push(`holds Internet (${internet} = true)`);
+      explain.push(`does NOT hold TV (${tv} = false) - the gap this campaign is selling into`);
+    } else if (lacksInternet && !lacksTv && tv && internet) {
+      // Internet attach: they have TV, they do not have Internet.
       predicates.push(`${tv} = true`);
       predicates.push(`${internet} = false`);
       explain.push(`holds TV (${tv} = true)`);
-      explain.push(`does NOT hold Internet (${internet} = false) - the exclusion that defines the upsell`);
-    } else if (targetsInternet && internet) {
-      predicates.push(`${internet} = false`);
-      explain.push(`does NOT hold Internet (${internet} = false)`);
+      explain.push(`does NOT hold Internet (${internet} = false) - the gap this campaign is selling into`);
     } else {
       ungrounded.push(
         "which product the customer must already hold and which they must not. The brief names products but " +

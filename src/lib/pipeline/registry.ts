@@ -15,7 +15,19 @@ export interface AgentDefinition {
   path: string;
   label: string;
   /** Who owns building out the real logic behind the stub, for the README/status UI. */
-  owner: string;
+  /*
+   * WHO IS BUILDING IT IS NOT PART OF THE PRODUCT.
+   *
+   * These carried "Dev 1", "Dev 2", "Dev 3 (you)" and "Unassigned" from
+   * when the pipeline was a build plan, and Agent Manager surfaced them on
+   * the Agents screen - so a Comcast reviewer saw our sprint allocation
+   * next to the agent that files their request.
+   *
+   * Optional now and set by nobody. Left in the type because a deployment
+   * that genuinely owns its agents may want to say so; a build assignment
+   * is not that.
+   */
+  owner?: string;
   /**
    * MCP tool names this task may call, enforced inside
    * src/lib/mcp-client.ts — a call to any tool NOT in this list throws
@@ -52,12 +64,33 @@ export interface AgentDefinition {
  * "Approved?", 2.7 "Attributes available?") rather than properties of an agent.
  * An agent whose gate is shut is not called and writes no task_runs row.
  */
+/*
+ * THE NAMES ON THE DECK.
+ *
+ * Morpheus, The Architect, Tank, The Keymaker and The Oracle are how this
+ * pipeline is presented to the client, so the labels the product emits match
+ * the slide rather than contradicting it. A reviewer reading the Event Log and
+ * a reviewer reading the deck should be looking at the same five things.
+ *
+ * Two mismatches are worth knowing rather than papering over:
+ *
+ *   THE DECK GIVES COUNTS TO THE ARCHITECT. In this pipeline the count is
+ *   Tank's, because the count comes out of building the segment. The label
+ *   moved; the behaviour did not, and pretending otherwise would put a number
+ *   on the wrong card during the demo.
+ *
+ *   THE ORACLE IS NOT IN THIS LIST. It is the Codex - the record itself, which
+ *   is Agent Manager, not a step in the harness. It has no entry here because
+ *   it does not run.
+ *
+ * `name` is untouched. Those are API identifiers that runs, gates and stored
+ * records are keyed on; renaming a label must never rename a contract.
+ */
 export const PIPELINE: AgentDefinition[] = [
   {
     name: "intake",
     path: "/api/agents/intake",
-    label: "Agent 1 — Intake",
-    owner: "Dev 1",
+    label: "Morpheus — Brief Agent",
     // Workfront only (workfront-core), per the stated split: create the
     // work request from the marketer's brief (B1), and list/get to check
     // for an existing duplicate before creating one. No update/delete —
@@ -71,8 +104,7 @@ export const PIPELINE: AgentDefinition[] = [
   {
     name: "review",
     path: "/api/agents/review",
-    label: "Agent 2 — Review / Triage",
-    owner: "Dev 2",
+    label: "The Architect — Validation Agent",
     /*
      * Phase 2 plus the 1.5a rework path, so the scope spans both.
      *
@@ -106,8 +138,7 @@ export const PIPELINE: AgentDefinition[] = [
   {
     name: "audience_creation",
     path: "/api/agents/audience-creation",
-    label: "Agent 3 — Audience Creation",
-    owner: "Dev 3 (you)",
+    label: "Tank — Segmentation Agent",
     allowedTools: [
       "search_adobe_knowledge",
       // B5 (3.1): decide FAC vs. AEP rule builder, and predict membership
@@ -184,8 +215,7 @@ export const PIPELINE: AgentDefinition[] = [
 export const ESCALATION: AgentDefinition = {
   name: "escalation",
   path: "/api/agents/escalation",
-  label: "Agent 4 — Escalation",
-  owner: "Unassigned",
+  label: "The Keymaker — Reconciliation Agent",
   // NOTE: the knowledge tool is `search_adobe_knowledge`. `search_knowledge_base`
   // does NOT exist on any server in the estate - it was asked for here and in
   // all three agents above, every call failed, the failure was written into the

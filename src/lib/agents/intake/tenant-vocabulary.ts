@@ -110,14 +110,22 @@ const SYNONYMS: Record<string, string[]> = {
 /** Every field the form exposes for this entity, with its allowed values. */
 export async function readFormFields(taskId: TaskId, entity: "issue" | "project"): Promise<FormField[]> {
   /*
-   * insights_search_fields only returns fields matching its query, so one
-   * question sees a fraction of the form. These queries were chosen against
-   * the live tenant to cover the marketing fields; they run in parallel
-   * because they are independent.
+   * A FIELD NOT SEARCHED FOR IS A FIELD THAT DOES NOT EXIST.
+   *
+   * insights_search_fields only returns fields matching its query, so this
+   * list decides what the form is understood to contain. "budget" was absent,
+   * so the tenant's real Budget field was never read - and the brief's budget
+   * was then reported as "this form has no Budget field", which was confidently
+   * wrong rather than merely unhelpful.
+   *
+   * They run in parallel because they are independent; adding one costs a
+   * round trip that happens concurrently, and missing one produces a false
+   * statement about the client's own form.
    */
   const queries = [
     "campaign", "audience", "objective", "launch", "channel", "region",
     "product", "type", "status", "priority", "name", "date",
+    "budget", "cost", "agency", "vendor", "market", "offer", "exclusion",
   ];
 
   const chunks = await Promise.all(
