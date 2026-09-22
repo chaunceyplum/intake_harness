@@ -296,10 +296,37 @@ Do not discover these in front of a client.
    form attached to this OPTASK". The tenant has the field; the form attached
    to that object does not. That is a Workfront configuration gap, not a code
    bug.
-4. **The harness container dies on its own** — `Exited (137)`, hours at a time,
-   memory fine, nothing watching it. When `:3100` refuses connections while
-   `:8080` is happily serving a stale-looking screen, check `sudo docker ps -a`
-   before you debug anything in the app.
+4. **The harness gets killed by a half-finished deploy.** It has gone down
+   three times, always as `Exited (137)`, and it is worth knowing exactly what
+   that is because the obvious reading is wrong.
+
+   `Exited (137)` usually means the kernel's OOM killer. Here it is not:
+
+   ```
+   OOMKilled=false   ExitCode=137   2.8 GB available
+   kernel OOM log:   nothing
+   harness log:      clean startup, then silence - no error, no crash trace
+   ```
+
+   137 with `OOMKilled=false` and no kernel OOM entry is **SIGKILL from
+   outside the container**, and the only thing here that sends it is
+   `docker rm -f harness` — the first line of `up-harness.sh`. Each time, what
+   came up afterwards was a container on the *other* image tag with no port
+   mapping and no env file. That is Trap 1 and Trap 2 above, happening for
+   real: a deploy kills the named container, starts a replacement the wrong
+   way, and leaves nothing serving `:3100` while passing its own health check.
+
+   So when `:3100` refuses connections while `:8080` serves a stale-looking
+   screen, this is nearly always it. `sudo docker ps -a` first, then
+   `bash /home/ubuntu/up-harness.sh`, then check
+   `sudo docker ps --filter ancestor=harness:latest` for a stray on the wrong
+   tag. Do not go looking for a memory leak; there isn't one.
+
+   **The underlying fault is in `up-harness.sh`**, which kills the running
+   container before it knows the new one will start, and which lives only on
+   the box rather than in this repo. Making it verify the image and the port
+   first, and put the old container back if the run fails, would remove the
+   trap rather than documenting it. Not yet done.
 5. **The database is shared with the other team's deployment**, and
    `db/schema.sql` seeds the `tasks` catalog with `ON CONFLICT DO UPDATE`. So
    when they apply their schema, our agent names revert to their build-plan
