@@ -181,6 +181,21 @@ async function main (params) {
             // A client id we were given by hand wins; otherwise register one.
             const clientId = server.oauth_client_id || (server.oauth && server.oauth.client_id) ||
                 await mcpOAuth.register(d.as, uri)
+            /*
+             * A STATIC client from the provider's console, which is the only
+             * way anyone but the person at this machine can sign in.
+             *
+             * Adobe IMS registers LOOPBACK redirects only - every other shape,
+             * including a clean https hostname, is refused "Invalid redirect
+             * URI" - so dynamic registration can never serve a hosted
+             * callback. A Developer Console credential can, and Adobe issues
+             * those with a secret.
+             *
+             * Server-side config only. It is never logged and never reaches a
+             * client.
+             */
+            const clientSecret = server.oauth_client_secret ||
+                (server.oauth && server.oauth.client_secret) || null
 
             const verifier = mcpOAuth.randomVerifier()
             const state = mcpOAuth.randomState()
@@ -191,6 +206,7 @@ async function main (params) {
                 as: d.as,
                 resource: d.resource,
                 redirectUri: uri,
+                clientSecret,
                 expiresAt: Date.now() + TXN_TTL_MS
             })
 
@@ -231,7 +247,8 @@ async function main (params) {
                 code,
                 verifier: txn.verifier,
                 redirectUri: txn.redirectUri,
-                resource: txn.resource
+                resource: txn.resource,
+                clientSecret: txn.clientSecret || null
             })
             await storeToken(txn.serverId, token, { client_id: txn.clientId, as: txn.as, resource: txn.resource })
             logger.info(`mcp-connect: stored a token for ${txn.serverId}`)

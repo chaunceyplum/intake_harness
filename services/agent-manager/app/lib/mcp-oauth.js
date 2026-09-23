@@ -171,20 +171,68 @@ function authorizeUrl ({ as, clientId, redirectUri, state, challenge, scopes, re
 }
 
 /** @returns {Promise<{access_token, refresh_token?, expires_in?, token_type?}>} */
-async function exchange ({ as, clientId, code, verifier, redirectUri, resource }) {
-    const form = new URLSearchParams({
+/**
+ * Does this failure look like the provider rejecting the client-authentication
+ * STYLE, rather than rejecting the grant itself?
+ *
+ * Keyed broadly on purpose, and this is the whole lesson of D78: IMS reports a
+ * missing or unacceptable client_secret as `invalid_grant`, not the
+ * RFC-conventional `invalid_client`, so a narrow check never retries and the
+ * sign-in dies on a fixable error.
+ */
+function looksLikeClientAuthRejection (res) {
+    if (res.ok) return false
+    if (res.body && res.body.error === 'invalid_client') return true
+    const text = `${(res.body && res.body.error_description) || ''} ${res.text || ''}`
+    return /client[_\s-]?secret|client authentication|unauthorized[_\s-]?client/i.test(text)
+}
+
+/**
+ * POST to the token endpoint, carrying the client secret the way the provider
+ * wants it.
+ *
+ * WHICH STYLE, SETTLED EMPIRICALLY (D77/D78, and reused here rather than
+ * rediscovered). Adobe's current IMS reference documents an
+ * `Authorization: Basic base64(id:secret)` header; its older adobeio-auth doc
+ * says Basic is unsupported and to send a `client_secret` form param. A live
+ * sign-in settled it - with the Basic header IMS answered "missing
+ * client_secret parameter". So FORM IS PRIMARY.
+ *
+ * Basic is kept as a fallback for a provider that needs it, and is tried only
+ * when the first attempt looks like a client-auth rejection. Never on a plain
+ * grant failure: an authorization code is single-use, and retrying one that
+ * was already consumed turns a clear error into a confusing one. RFC 6749
+ * forbids sending both styles at once, hence sequential attempts.
+ *
+ * A public client - no secret, which is every dynamically registered one -
+ * sends neither and behaves exactly as before.
+ */
+async function postToken (as, params, clientSecret) {
+    const attempt = async (style) => {
+        const form = new URLSearchParams(params)
+        const headers = { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' }
+        if (clientSecret && style === 'form') form.set('client_secret', clientSecret)
+        if (clientSecret && style === 'basic') {
+            headers.Authorization = `Basic ${Buffer.from(`${params.client_id}:${clientSecret}`).toString('base64')}`
+        }
+        return fetchJson(as.token_endpoint, { method: 'POST', headers, body: form.toString() })
+    }
+
+    const first = await attempt(clientSecret ? 'form' : 'none')
+    if (first.ok || !clientSecret || !looksLikeClientAuthRejection(first)) return first
+    return attempt('basic')
+}
+
+async function exchange ({ as, clientId, code, verifier, redirectUri, resource, clientSecret }) {
+    const params = {
         grant_type: 'authorization_code',
         code,
         redirect_uri: redirectUri,
         client_id: clientId,
         code_verifier: verifier
-    })
-    if (resource) form.set('resource', resource)
-    const res = await fetchJson(as.token_endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
-        body: form.toString()
-    })
+    }
+    if (resource) params.resource = resource
+    const res = await postToken(as, params, clientSecret)
     if (!res.ok || !res.body || !res.body.access_token) {
         throw new Error(`Token exchange failed (HTTP ${res.status}): ${res.text ? res.text.slice(0, 250) : 'no body'}`)
     }
@@ -192,18 +240,17 @@ async function exchange ({ as, clientId, code, verifier, redirectUri, resource }
 }
 
 /** Swap a refresh token for a new access token. */
-async function refresh ({ as, clientId, refreshToken, resource }) {
-    const form = new URLSearchParams({
+async function refresh ({ as, clientId, refreshToken, resource, clientSecret }) {
+    const params = {
         grant_type: 'refresh_token',
         refresh_token: refreshToken,
         client_id: clientId
-    })
-    if (resource) form.set('resource', resource)
-    const res = await fetchJson(as.token_endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
-        body: form.toString()
-    })
+    }
+    if (resource) params.resource = resource
+    // The same client authentication as the exchange. A confidential client
+    // that could sign in and then never refresh would look like a token that
+    // expires for no reason a day later.
+    const res = await postToken(as, params, clientSecret)
     if (!res.ok || !res.body || !res.body.access_token) {
         throw new Error(`Refresh failed (HTTP ${res.status}): ${res.text ? res.text.slice(0, 250) : 'no body'}`)
     }
