@@ -73,23 +73,27 @@ export type FieldSpec = {
 /**
  * REQUIRED means: without this, no audience can be built or targeted.
  *
- * Not "the form marks it mandatory" - the form marks more than this mandatory,
- * and treating all of it as blocking is how the loop count passes two. Cadence
- * and activation pattern matter for execution and can be settled after the
- * audience exists, so they do not block.
+ * NONE of the fields below are `required` any more - explicit product
+ * direction for the executive demo: the only required input is the brief
+ * itself. Intake infers what it can and proceeds; it never blocks on a
+ * campaign name, business objective, customer type, line of business,
+ * request type, or launch date being absent. The only thing that still
+ * blocks Intake is a filter the brief names that has no matching field in
+ * customer data at all (see src/lib/agents/intake/buildability.ts) - a
+ * buildability question, not a form-completeness one. `required` stays on
+ * FieldSpec (unused today) rather than being deleted, so a future field
+ * that genuinely blocks building anything has somewhere to say so.
  */
 export const CAMPAIGN_BRIEF_FIELDS: readonly FieldSpec[] = [
   {
     key: "campaign_name",
     label: "Campaign name",
-    required: true,
     aliases: ["campaign", "name of campaign", "initiative", "Name of the Campaign"],
     ask: "What should this campaign be called? A short name is enough - it becomes the Workfront request title.",
   },
   {
     key: "business_objective",
     label: "Business objective",
-    required: true,
     options: ["Growth/Upsell", "Retention", "Acquisition"],
     optionsPartial: true,
     aliases: ["objective", "goal", "business goal", "Objective of the campaign"],
@@ -98,7 +102,6 @@ export const CAMPAIGN_BRIEF_FIELDS: readonly FieldSpec[] = [
   {
     key: "customer_type",
     label: "Customer type",
-    required: true,
     options: ["Subscriber - Existing Customers", "Prospect - Non-Customers"],
     optionsPartial: true,
     aliases: ["audience type", "who are we targeting"],
@@ -107,7 +110,6 @@ export const CAMPAIGN_BRIEF_FIELDS: readonly FieldSpec[] = [
   {
     key: "line_of_business",
     label: "Line of business",
-    required: true,
     options: ["Residential (RES)", "Business (SMB)"],
     optionsPartial: true,
     aliases: ["lob", "segment", "division"],
@@ -116,7 +118,6 @@ export const CAMPAIGN_BRIEF_FIELDS: readonly FieldSpec[] = [
   {
     key: "request_type",
     label: "Request type",
-    required: true,
     options: ["Audience Build-Only", "Audience + Campaign Execution"],
     optionsPartial: true,
     aliases: ["what do you need", "scope"],
@@ -125,7 +126,6 @@ export const CAMPAIGN_BRIEF_FIELDS: readonly FieldSpec[] = [
   {
     key: "launch_date",
     label: "Launch date",
-    required: true,
     aliases: ["in market", "go live", "live date", "launch", "Requested_Launch_Date", "Requested Launch Date"],
     // The nightly segmentation job at 21:45 (B6) means a date is not a
     // formality - every rework cycle after it costs a full day.
@@ -504,7 +504,13 @@ export const CAMPAIGN_BRIEF_FIELDS: readonly FieldSpec[] = [
   },
 ] as const;
 
-/** The fields without which nothing can be built. */
+/**
+ * The fields without which nothing can be built - none, today (see this
+ * file's docstring above CAMPAIGN_BRIEF_FIELDS). Kept as a function rather
+ * than deleted: review/route.ts's preflight and triage.ts's rejection
+ * summary both still call it, and an always-empty result is the correct
+ * answer for both now, not a special case they need to know about.
+ */
 export function requiredFields(): FieldSpec[] {
   return CAMPAIGN_BRIEF_FIELDS.filter((f) => f.required);
 }
