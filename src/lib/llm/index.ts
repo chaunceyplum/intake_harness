@@ -15,6 +15,11 @@
  * surfacing, not one to paper over by quietly falling back.
  *
  *   LLM_PROVIDER = bedrock | anthropic | ollama   (unset = LLM disabled)
+ *   LLM_PII_REDACTION = off                       (unset = redaction ON)
+ *
+ * Every client is wrapped in withGovernance (src/lib/governance/) OUTSIDE
+ * the tracer: PII is tokenized before a prompt leaves the process, restored
+ * locally in the answer, and each call writes an audit_events row.
  *
  * Per-provider vars - see each provider file for the full list:
  *   bedrock:   AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
@@ -28,6 +33,7 @@ import { createBedrockClient } from "./providers/bedrock";
 import { createAnthropicClient } from "./providers/anthropic";
 import { createOllamaClient } from "./providers/ollama";
 import { traceExternalCall } from "@/lib/mcp-client";
+import { withGovernance } from "@/lib/governance/governed-client";
 
 export type { LlmClient, LlmCompletionRequest, LlmCompletionResult } from "./types";
 export { LlmConfigError } from "./types";
@@ -59,26 +65,26 @@ export function getLlmClient(): LlmClient | null {
 
   switch (provider) {
     case "bedrock":
-      return traced(createBedrockClient({
+      return withGovernance(traced(createBedrockClient({
         region: req("AWS_REGION"),
         accessKeyId: req("AWS_ACCESS_KEY_ID"),
         secretAccessKey: req("AWS_SECRET_ACCESS_KEY"),
         sessionToken: opt("AWS_SESSION_TOKEN"),
         modelId: opt("BEDROCK_MODEL_ID"),
-      }));
+      })));
     case "anthropic":
-      return traced(createAnthropicClient({
+      return withGovernance(traced(createAnthropicClient({
         apiKey: req("ANTHROPIC_API_KEY"),
         model: opt("ANTHROPIC_MODEL"),
         baseUrl: opt("ANTHROPIC_BASE_URL"),
-      }));
+      })));
     case "ollama":
-      return traced(createOllamaClient({
+      return withGovernance(traced(createOllamaClient({
         // Host is required and intentionally has no default - it changes often,
         // so the user supplies it every time (see ollama.ts).
         host: req("OLLAMA_HOST"),
         model: req("OLLAMA_MODEL"),
-      }));
+      })));
     default:
       throw new LlmConfigError(
         `LLM_PROVIDER="${provider}" is not recognised. Use one of: bedrock, anthropic, ollama.`,

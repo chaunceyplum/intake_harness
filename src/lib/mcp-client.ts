@@ -126,6 +126,12 @@ export async function withToolCallLog<T>(
   return { result, toolCalls: log };
 }
 
+/** The run/agent the current async call chain belongs to, or null outside a traced run (e.g. preview). */
+export function currentTraceContext(): { runId: string; taskId: TaskId } | null {
+  const ctx = toolCallLogStorage.getStore();
+  return ctx ? { runId: ctx.runId, taskId: ctx.taskId } : null;
+}
+
 /**
  * Trace a NON-MCP external call (today: an LLM completion) into the exact same
  * tool-call log and live view MCP calls use, so the UI renders it with zero new

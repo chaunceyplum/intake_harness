@@ -154,6 +154,21 @@ Postgres advisory lock per `run_id` (see `db.ts`'s `withAdvisoryLock`) — the
 loser gets a clear "already being processed" error instead of the same
 agent step running twice.
 
+## Governance: PII redaction and the audit log
+
+Every LLM client from `getLlmClient()` is wrapped in `withGovernance`
+(`src/lib/governance/`). Before a prompt leaves the app, emails, phones,
+SSNs, card numbers and IPs are swapped for placeholders (`[EMAIL_1]`); the
+model's answer has them restored in memory. The wrapper sits *outside* the
+tracer, so the traces saved to `task_runs.metadata` only ever hold the
+redacted text.
+
+Each LLM call and each approval-gate decision writes an `audit_events` row
+(action, actor, run, model, SHA-256 of the prompt, redaction counts), never
+payloads. A trigger makes the table append-only, with deletes allowed only
+after 365 days. Risks, owners and open gaps are tracked in
+[`docs/governance/risk-register.md`](docs/governance/risk-register.md).
+
 ## The agent contract (`src/lib/pipeline/types.ts`)
 
 Every agent route receives:

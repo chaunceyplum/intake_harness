@@ -328,3 +328,45 @@ CREATE TABLE IF NOT EXISTS eval_results (
 
 CREATE INDEX IF NOT EXISTS idx_eval_runs_started ON eval_runs(started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_eval_results_run ON eval_results(eval_run_id);
+
+-- Append-only governance audit trail (src/lib/governance/audit.ts). One row
+-- per LLM call and per human approval-gate decision. Deliberately NOT a
+-- foreign key to runs: an audit record must outlive the run it describes,
+-- and ON DELETE SET NULL would be an UPDATE the trigger below forbids.
+-- Holds no payloads - only a SHA-256 of what was sent to the model, plus
+-- counts (e.g. how many emails were redacted), so retaining it for a year
+-- doesn't turn it into a customer-data store of its own.
+CREATE TABLE IF NOT EXISTS audit_events (
+    event_id      BIGSERIAL PRIMARY KEY,
+    occurred_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    action        TEXT NOT NULL,
+    actor         TEXT NOT NULL,
+    run_id        UUID,
+    task_id       TEXT,
+    model         TEXT,
+    input_sha256  TEXT,
+    details       JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_events_run ON audit_events(run_id, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_audit_events_action ON audit_events(action, occurred_at DESC);
+
+-- Tamper resistance: no UPDATE ever, and DELETE only once a row is past the
+-- 365-day retention window (the only legitimate reason to remove one).
+-- A DB superuser can still disable the trigger - this guards against the
+-- application or an operator's ad hoc SQL, not against the DBA.
+CREATE OR REPLACE FUNCTION audit_events_guard() RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'UPDATE' THEN
+        RAISE EXCEPTION 'audit_events is append-only';
+    END IF;
+    IF OLD.occurred_at > NOW() - INTERVAL '365 days' THEN
+        RAISE EXCEPTION 'audit_events rows are retained for 365 days';
+    END IF;
+    RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS audit_events_guard ON audit_events;
+CREATE TRIGGER audit_events_guard BEFORE UPDATE OR DELETE ON audit_events
+    FOR EACH ROW EXECUTE FUNCTION audit_events_guard();

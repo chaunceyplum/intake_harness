@@ -225,7 +225,11 @@ export function RunsBrowser({ initialRunId }: { initialRunId?: string }) {
     setAdvancing(true);
     setError(null);
     try {
-      const res = await fetch(`/api/runs/${selectedRunId}/continue`, { method: "POST" });
+      const res = await fetch(`/api/runs/${selectedRunId}/continue`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ adminName: selectedAdmin || undefined }),
+      });
       const data = await res.json().catch(() => null);
       if (!res.ok) {
         setError(data?.error ?? `Failed to continue run (HTTP ${res.status}).`);
