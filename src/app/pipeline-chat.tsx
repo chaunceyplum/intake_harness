@@ -8,6 +8,7 @@ import { StatusBadge } from "./status-badge";
 import { ToolCallTrace, type ToolCallOutput } from "./tool-call-trace";
 import { ToolCallLog, type ToolCallLogEntry } from "./tool-call-log";
 import { LiveToolCallLog, type LiveToolCall } from "./live-tool-call-log";
+import { AudienceCard, DemoPill } from "./audience-card";
 
 type RunDetail = { run: RunRow; taskRuns: TaskRunRow[] };
 type PendingQuestion = { key: string; label: string; ask: string | null; options: string[] | null };
@@ -43,6 +44,8 @@ type StepOutput = ToolCallOutput & {
 export function PipelineChat() {
   const [brief, setBrief] = useState("");
   const [workfrontProjectId, setWorkfrontProjectId] = useState("");
+  // Governed by default, same as the agents - Demo has to be chosen, never fallen into.
+  const [mode, setMode] = useState<"governed" | "demo">("governed");
   const [runDetail, setRunDetail] = useState<RunDetail | null>(null);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
@@ -124,7 +127,7 @@ export function PipelineChat() {
       const res = await fetch("/api/runs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ input: { brief: text, fields } }),
+        body: JSON.stringify({ input: { brief: text, fields, ...(mode === "demo" ? { mode } : {}) } }),
       });
       const data = await res.json().catch(() => null);
       if (!res.ok) throw new Error(data?.error ?? `HTTP ${res.status}`);
@@ -222,6 +225,7 @@ export function PipelineChat() {
   const pendingQuestions =
     run?.status === "needs_input" ? ((lastStep?.output as StepOutput | null)?.questions ?? []) : [];
   const readyToSend = pendingQuestions.every((q) => (answers[q.key] ?? "").trim() !== "");
+  const runIsDemo = (run?.input as { mode?: string } | undefined)?.mode === "demo";
 
   return (
     <div className="flex flex-col gap-4 rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
@@ -236,7 +240,8 @@ export function PipelineChat() {
         )}
 
         {run && (
-          <div className="flex justify-end">
+          <div className="flex items-start justify-end gap-2">
+            {runIsDemo && <DemoPill text="Demo – not approved" />}
             <p className="max-w-[85%] rounded-2xl bg-zinc-900 px-3 py-2 text-sm text-white dark:bg-zinc-100 dark:text-black">
               {(run.input as { brief?: string })?.brief ?? JSON.stringify(run.input)}
             </p>
@@ -283,6 +288,7 @@ export function PipelineChat() {
 
               <div className="ml-7 flex flex-col gap-1.5">
                 <ToolCallTrace output={output} metadata={tr.metadata} />
+                {tr.task_id === "audience_creation" && <AudienceCard output={tr.output} metadata={tr.metadata} />}
               </div>
 
               {isOpen && (
@@ -434,6 +440,30 @@ export function PipelineChat() {
               onChange={(e) => setWorkfrontProjectId(e.target.value)}
               disabled={busy}
             />
+            <div className="flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
+              {(["governed", "demo"] as const).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setMode(m)}
+                  disabled={busy}
+                  aria-pressed={mode === m}
+                  className={`rounded-full border px-3 py-1 ${
+                    mode === m
+                      ? m === "demo"
+                        ? "border-amber-400 bg-amber-100 text-amber-900 dark:border-amber-800 dark:bg-amber-950/60 dark:text-amber-300"
+                        : "border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-black"
+                      : "border-zinc-300 hover:border-zinc-400 dark:border-zinc-700"
+                  }`}
+                >
+                  {m === "demo" ? "Demo" : "Governed"}
+                </button>
+              ))}
+              <span>
+                {mode === "demo"
+                  ? "Builds in the tapdemo sandbox only - no Workfront request, no activation, no spend."
+                  : "Files a Workfront request and follows the normal approval path."}
+              </span>
+            </div>
           </div>
         ) : (
           <div className="flex items-center justify-between">
