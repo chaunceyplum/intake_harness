@@ -36,6 +36,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ run
     loopCount?: number;
     fields?: Record<string, unknown>;
     questions?: { key: string; label: string }[];
+    mode?: string;
   };
   const typedAnswers = body.answers as Record<string, unknown>;
 
@@ -76,10 +77,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ run
     );
   }
 
+  // mode must survive the pause: Intake defaults a missing mode to
+  // "governed", so dropping it here would resume a Demo run as Governed and
+  // file the real Workfront request Demo mode promises never to file.
   const resumedInput = {
     brief: pausedOutput.brief,
     loopCount: pausedOutput.loopCount,
     fields: mergedFields,
+    ...(pausedOutput.mode === "demo" ? { mode: "demo" } : {}),
   };
 
   const baseUrl = req.nextUrl.origin;
