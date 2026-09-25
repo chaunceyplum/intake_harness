@@ -204,63 +204,6 @@ function findLaunchDate(brief: string): ExtractedField | null {
 }
 
 /**
- * The campaign name, from the opening of the brief.
- *
- * Almost every brief opens by naming the campaign - "Fall Switch and Save.
- * Growth/Upsell for..." - and without this, campaign_name was required,
- * unextractable, and therefore asked for on every single brief. An agent whose
- * first question is "what is this campaign called?" when the marketer named it
- * in the first four words is the B1 loop, just politer.
- *
- * DERIVED, never stated. The opening sentence is a strong signal and not a
- * fact, so it is marked derived and the marketer confirms it - which is cheaper
- * than asking, and honest about where the value came from. Anything that reads
- * like a sentence rather than a title is left alone.
- */
-function findCampaignName(brief: string): ExtractedField | null {
-  const text = String(brief || "");
-
-  /*
-   * A named campaign, however the sentence is built around it.
-   *
-   * Real briefs open with a greeting - "Hey - we need an audience for the Fall
-   * Switch and Save push" - so taking the first sentence gave a 13-word
-   * sentence starting with "Hey", which was correctly rejected as not a title,
-   * and the campaign name sitting in the middle of it was missed. Marketers
-   * name the campaign in a small number of recognisable frames; those are
-   * cheaper and far more accurate than guessing at the sentence.
-   */
-  const framed = text.match(
-    /\bfor (?:the )?(.{3,60}?)\s+(?:push|campaign|launch|programme|program|initiative|activation)\b/i,
-  ) || text.match(/\b(?:campaign|push|programme|program)\s+(?:called|named)\s+"?(.{3,60}?)"?(?:[.,]|$)/i);
-
-  if (framed) {
-    const name = framed[1].trim().replace(/^(our|the|a)\s+/i, "");
-    if (name && name.split(/\s+/).length <= 8) {
-      return { key: "campaign_name", label: "Campaign name", value: name, from: "derived", evidence: framed[0] };
-    }
-  }
-
-  const first = text.split(/[.!?\n]/)[0]?.trim();
-  if (!first) return null;
-
-  const words = first.split(/\s+/);
-  // A title, not a sentence: short, and not starting with a verb phrase that
-  // means the marketer has launched straight into the request.
-  if (words.length < 2 || words.length > 9) return null;
-  if (/^(we|i|this|the team|please|can|could|need|want|looking|there)\b/i.test(first)) return null;
-  if (/[:;,]$/.test(first)) return null;
-
-  return {
-    key: "campaign_name",
-    label: "Campaign name",
-    value: first,
-    from: "derived",
-    evidence: first,
-  };
-}
-
-/**
  * Read a brief.
  * @param brief the marketer's own words
  * @param known anything already structured (a rework loop carries this)
@@ -348,11 +291,15 @@ export function parseBrief(
     if (d) push(d);
   }
 
-  // 5. The campaign name, from the opening line.
-  if (!seen.has("campaign_name")) {
-    const n = findCampaignName(brief);
-    if (n) push(n);
-  }
+  /*
+   * 5. NO campaign-name guessing. This used to derive one from the brief's
+   * opening clause ("Fall Switch and Save. Growth/Upsell for..."). Explicit
+   * product direction for the executive demo: never have the model invent a
+   * campaign name, even one marked "derived" - a name absent here reaches
+   * the UI as absent, and the UI defaults its DISPLAY to "Untitled audience
+   * · <date>" (edited inline by the marketer), rather than this module
+   * guessing at a value that gets typed into Workfront.
+   */
 
   // 6. The offer. "$350 prepaid card", "600 dollar prepaid card".
   if (!seen.has("offer")) {

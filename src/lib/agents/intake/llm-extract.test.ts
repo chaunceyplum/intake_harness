@@ -80,8 +80,11 @@ describe("extractIntake - LLM preferred, deterministic always the floor", () => 
     const res = await extractIntake(brief, {}, null);
     expect(res.source).toBe("deterministic");
     expect(res.model).toBeNull();
-    // still a real parse
-    expect(res.parsed.fields.campaign_name).toBeTruthy();
+    // still a real parse - cue-phrase fields extract deterministically...
+    expect(res.parsed.fields.line_of_business).toBeTruthy();
+    // ...but campaign_name is never guessed from the brief's opening clause
+    // any more (explicit product direction: no invented campaign names).
+    expect(res.parsed.fields.campaign_name).toBeUndefined();
   });
 
   it("uses the LLM when it returns usable extractions", async () => {
@@ -103,7 +106,7 @@ describe("extractIntake - LLM preferred, deterministic always the floor", () => 
     const res = await extractIntake(brief, {}, stubClient(new Error("boom")));
     expect(res.source).toBe("deterministic");
     expect(res.fallbackReason).toMatch(/LLM extraction failed/);
-    expect(res.parsed.fields.campaign_name).toBeTruthy();
+    expect(res.parsed.fields.line_of_business).toBeTruthy();
   });
 
   it("falls back when the LLM returns no usable fields", async () => {

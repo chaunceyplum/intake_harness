@@ -2,23 +2,31 @@ import { describe, it, expect } from "vitest";
 import { parseBrief, nextQuestions } from "./parse";
 import { requiredFields, audienceFields } from "@/lib/agents/shared/campaign-brief";
 
-const COMPLETE_REQUIRED_BRIEF =
-  "Campaign name: Fall Push. Business objective: Growth/Upsell for existing residential subscribers. " +
-  "Line of business: Residential (RES). Request type: Audience Build-Only. Launch date: 1 November.";
+const OLD_BASELINE_KEYS = [
+  "campaign_name",
+  "business_objective",
+  "customer_type",
+  "line_of_business",
+  "request_type",
+  "launch_date",
+];
 
-describe("nextQuestions sequencing - required fields before audience-completeness ones", () => {
-  it("asks about missing REQUIRED fields first, never an audience field while any required field is still missing", () => {
+describe("nextQuestions - no required-field tier any more (explicit product direction: brief-only intake)", () => {
+  it("requiredFields() is empty - nothing blocks a brief from proceeding", () => {
+    expect(requiredFields()).toEqual([]);
+  });
+
+  it("a brief with nothing structured never asks about the old baseline fields (campaign name, objective, customer type, line of business, request type, launch date)", () => {
     const parsed = parseBrief("We need something built.");
+    expect(parsed.missing).toEqual([]); // requiredFields() is empty, so nothing is ever "missing" here
     const questions = nextQuestions(parsed, 2);
-    expect(questions.length).toBe(2);
     for (const q of questions) {
-      expect(requiredFields().map((f) => f.key)).toContain(q.key);
+      expect(OLD_BASELINE_KEYS).not.toContain(q.key);
     }
   });
 
-  it("once every required field is answered, moves on to askForAudience fields instead of stopping", () => {
-    const parsed = parseBrief(COMPLETE_REQUIRED_BRIEF);
-    expect(parsed.missing).toEqual([]); // every required field was extracted from the brief
+  it("falls straight through to askForAudience fields when nothing is stated - never stops on the old baseline", () => {
+    const parsed = parseBrief("We need something built.");
     const questions = nextQuestions(parsed, 2);
     expect(questions.length).toBe(2);
     for (const q of questions) {
@@ -26,20 +34,15 @@ describe("nextQuestions sequencing - required fields before audience-completenes
     }
   });
 
-  it("stops asking (empty) once both required and audience-completeness fields are all answered", () => {
-    // Every required AND every askForAudience field, keyed exactly as parse.ts expects.
+  it("stops asking (empty) once every askForAudience field is answered", () => {
     const known: Record<string, string> = {};
-    for (const f of requiredFields()) known[f.key] = "x";
     for (const f of audienceFields()) known[f.key] = "x";
-
     const parsed = parseBrief("", known);
     expect(nextQuestions(parsed, 2)).toEqual([]);
   });
 
-  it("respects the same 2-per-round cap for audience questions as for required ones", () => {
-    const known: Record<string, string> = {};
-    for (const f of requiredFields()) known[f.key] = "x";
-    const parsed = parseBrief("", known);
+  it("respects the 2-per-round cap for audience questions", () => {
+    const parsed = parseBrief("");
     expect(parsed.missing).toEqual([]);
     expect(parsed.missingAudience.length).toBeGreaterThan(2); // there are more than 2 askForAudience fields
     expect(nextQuestions(parsed, 2).length).toBe(2);
