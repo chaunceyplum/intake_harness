@@ -291,6 +291,27 @@ async function writeCustomFields(
 }
 
 /**
+ * Demo mode's intake outcome: no Workfront call at all, not even a read.
+ *
+ * Same CreateOutcome shape createIntakeRequest's own WORKFRONT_WRITES_DISABLED
+ * kill switch already returns (see the top of createIntakeRequest below) -
+ * Demo mode is that same honest "would have created" contract, just for a
+ * different reason (a Demo-mode run never files a real Workfront request by
+ * design, not because writes happen to be off on this tenant). Pure and
+ * synchronous: nothing here calls callMcpTool, so calling this function can
+ * never be mistaken for having filed anything.
+ */
+export function demoIntakeOutcome(intake: Record<string, unknown>, brief: string): CreateOutcome {
+  const { fields, customFields, dropped } = toWorkfrontPayload(intake, brief, null);
+  return {
+    created: false,
+    reason: "Demo mode - no Workfront request is filed. Switch to Governed mode to route this through Workfront.",
+    wouldHaveCreated: { objCode: INTAKE_OBJECT, formId: INTAKE_FORM_ID, fields, customFields },
+    fieldNames: { verified: false, source: "demo mode - not resolved", dropped },
+  };
+}
+
+/**
  * Create the intake request in Workfront.
  *
  * Returns what it would have created when the tools are unreachable, so a

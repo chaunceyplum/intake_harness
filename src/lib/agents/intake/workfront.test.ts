@@ -13,7 +13,7 @@ vi.mock("@/lib/agents/intake/workfront-fields", () => ({
   applyFieldMap: vi.fn(() => ({ customFields: {}, dropped: [] })),
 }));
 
-const { createIntakeRequest } = await import("./workfront");
+const { createIntakeRequest, demoIntakeOutcome } = await import("./workfront");
 
 beforeEach(() => {
   queryMock.mockReset();
@@ -71,5 +71,22 @@ describe("createIntakeRequest's idempotency check", () => {
     // create path run exactly as if no prior attempt existed.
     const result = await createIntakeRequest({ runId: "run-3", intake: {}, brief: "x" });
     expect(result.created).toBe(false);
+  });
+});
+
+describe("demoIntakeOutcome - Demo mode's dry-run, with zero Workfront calls", () => {
+  it("never calls the MCP client, not even a read", () => {
+    demoIntakeOutcome({ campaign_name: "Test" }, "Test brief");
+    expect(callMcpToolMock).not.toHaveBeenCalled();
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it("reports created:false, with the payload it would have sent, and says why", () => {
+    const result = demoIntakeOutcome({ campaign_name: "Fall Save" }, "Test brief");
+    expect(result.created).toBe(false);
+    if (!result.created) {
+      expect(result.reason).toMatch(/Demo mode/);
+      expect(result.wouldHaveCreated.fields.name).toBe("Fall Save");
+    }
   });
 });

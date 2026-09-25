@@ -1,51 +1,50 @@
 import { NextRequest, NextResponse } from "next/server";
 import { callMcpTool, withToolCallLog } from "@/lib/mcp-client";
 import type { AgentRequest, AgentResponse } from "@/lib/pipeline/types";
-import { nextQuestions, type ParsedIntake } from "@/lib/agents/intake/parse";
+import type { ParsedIntake } from "@/lib/agents/intake/parse";
 import { extractIntake } from "@/lib/agents/intake/llm-extract";
-import { createIntakeRequest, toWorkfrontPayload } from "@/lib/agents/intake/workfront";
+import { createIntakeRequest, demoIntakeOutcome, toWorkfrontPayload } from "@/lib/agents/intake/workfront";
+import { findUnmappableFilter, type UnmappableFilter } from "@/lib/agents/intake/buildability";
 
 /**
  * Agent 1 - Intake. B1, at step 1.2a.
  *
- * "The agent cannot build the intake from the prompt, so it bounces back to the
- * marketer. The loop can run many times, and each round trip is unbounded...
- * Questions must be grounded in AEP schemas and the FAC view, so the agent asks
- * for the two things actually missing rather than re-asking the whole brief.
- * Track loop count as a health metric - more than two rounds means the agent
- * failed, not the marketer."
+ * ORIGINAL DESIGN, PRESERVED: "The agent cannot build the intake from the
+ * prompt, so it bounces back to the marketer... Track loop count as a
+ * health metric - more than two rounds means the agent failed, not the
+ * marketer." That loop-count discipline (LOOP_LIMIT below), the never-
+ * invent-a-value rule, and grounding every question in what AEP actually
+ * holds are all unchanged.
  *
- * Three things follow from that, and they are the whole design:
+ * WHAT CHANGED, ON EXPLICIT PRODUCT DIRECTION FOR THE EXECUTIVE DEMO: the
+ * only required input is the brief. Campaign name, business objective,
+ * customer type, line of business, request type, and launch date are all
+ * optional now (campaign-brief.ts) - this agent infers what it can from the
+ * brief and proceeds when one is absent, rather than asking. It does NOT
+ * fall back to asking about the askForAudience tier either (lifecycle
+ * journey, refresh cadence, etc.) - those stay informational (see
+ * `summarise`'s missing/missingAudience) but never block a run.
  *
- * 1. ASK FOR TWO THINGS. parse.ts computes which required fields the brief does
- *    not answer; nextQuestions takes the first two. Asking for eleven is what
- *    makes a loop unbounded, so the cap is the feature, not a limitation.
+ * THE ONE THING THAT STILL PAUSES THIS AGENT: a filter the brief names that
+ * has no matching field in customer data at all - e.g. "SEP-eligible" when
+ * nothing in AEP looks like a SEP-eligibility flag. That is answered by
+ * buildability.ts's findUnmappableFilter, which reuses the same schema
+ * probe Review/Audience Creation already run. It asks ONE specific
+ * question about that ONE filter - never a batch, never a vague "please
+ * complete the brief." Never silently drops the condition and builds a
+ * broader audience instead.
  *
- * 2. COUNT THE LOOPS, AND OWN THE FAILURE. loopCount arrives on the request and
- *    leaves in metadata. Past two rounds this agent reports its OWN failure
- *    rather than asking again: the doc is explicit that at that point the agent
- *    has failed, and an agent that blames the marketer indefinitely is the bug
- *    being fixed.
+ * WHAT IT STILL WILL NOT DO: invent a value. A campaign name the brief
+ * doesn't state stays absent here (see parse.ts) - the UI defaults its
+ * DISPLAY to "Untitled audience · <date>", never this agent.
  *
- * 3. GROUND THE QUESTIONS in what AEP actually holds, and say so when the
- *    lookup failed rather than presenting an ungrounded question as grounded.
- *
- * WHAT IT WILL NOT DO: invent a value. A field the brief does not state is
- * either inferred AND FLAGGED as inferred, or asked about. Filling the form in
- * to make a run go green is precisely the failure this system exists to catch.
- *
- * A SECOND ROUND OF QUESTIONS, ONCE THE FIRST IS ANSWERED: once every
- * `required` field is in hand, nextQuestions doesn't stop there any more -
- * it moves on to campaign-brief.ts's `askForAudience` fields (audience build
- * method, size, refresh cadence, exclusions, data availability/location,
- * predictive model, activation pattern, product mix, and more - see that
- * file's FieldSpec docstring). Same 2-per-round pacing, same LOOP_LIMIT,
- * just a longer list to work through before `completed`. Explicit product
- * direction, from a real LCE Workfront form's "Audience Specifications &
- * Model Integration" section: this app is meant to eventually write a
- * Workfront custom form storing these answers, which means Agent 1 has to
- * actually collect them, not just extract them opportunistically and leave
- * the rest blank.
+ * DEMO VS. GOVERNED MODE (`input.mode`, defaulting to "governed" when
+ * absent - so every existing caller that doesn't know about modes yet keeps
+ * today's behavior unchanged): Demo mode never files a Workfront intake
+ * request (demoIntakeOutcome - a pure, zero-call dry run) and probes AEP
+ * against the "tapdemo" sandbox explicitly. Governed mode is untouched -
+ * the real Workfront create (createIntakeRequest), subject to the same
+ * WORKFRONT_WRITES_DISABLED kill switch as always.
  */
 
 /**
@@ -63,27 +62,29 @@ function readLoopCount(body: AgentRequest<{ loopCount?: number }>): number {
   return Number.isFinite(n) && n >= 0 ? n : 0;
 }
 
+/** "demo" only when the caller explicitly asks for it; every other value (including absent) is Governed - today's unchanged default. */
+function readMode(body: AgentRequest<{ mode?: string }>): "demo" | "governed" {
+  return body.input?.mode === "demo" ? "demo" : "governed";
+}
+
 /**
- * Ground the questions in what the platform can actually segment on.
+ * Ground the question in what the platform can actually segment on.
  *
- * "Questions must be grounded in AEP schemas and the FAC view." A question like
- * "which line of business?" is answerable in the abstract; the useful version
- * knows what fields exist. This attaches that context and reports honestly when
- * it could not be fetched - a question labelled grounded when the lookup failed
- * is worse than an openly ungrounded one.
+ * "Questions must be grounded in AEP schemas and the FAC view." This attaches
+ * that context and reports honestly when it could not be fetched - a
+ * question labelled grounded when the lookup failed is worse than an openly
+ * ungrounded one.
  */
-async function groundQuestions(missingLabels: string[]) {
-  if (!missingLabels.length) {
-    return { grounded: false, reason: "nothing missing to ground", hits: null as unknown };
+async function groundQuestion(label: string | null) {
+  if (!label) {
+    return { grounded: false, reason: "nothing unmapped to ground", hits: null as unknown };
   }
   try {
     // search_adobe_knowledge takes only { query, topic? } (see chaunceyplum/mcp
     // mcp_server/lambda_handler.py) — "agent" is hardcoded to "adobe" inside the
     // tool itself, not a caller param, and there is no top_k on this tool at all.
-    // Passing either produced "<lambda>() got an unexpected keyword argument
-    // 'agent'" on every call, so grounding silently failed on every run.
     const hits = await callMcpTool("intake", "search_adobe_knowledge", {
-      query: `Adobe Experience Platform profile attributes and schema fields for ${missingLabels.join(", ")}`,
+      query: `Adobe Experience Platform profile attributes and schema fields for ${label}`,
       topic: "aep",
     });
     return { grounded: true, reason: null, hits };
@@ -103,11 +104,10 @@ function summarise(parsed: ParsedIntake) {
       from: f.from,
       evidence: f.evidence ?? null,
     })),
+    // Neither of these blocks a run any more (see this file's docstring) -
+    // purely informational, so a reader can see what the brief left
+    // unstated without mistaking it for why the run paused.
     missing: parsed.missing.map((f) => f.key),
-    // Audience-completeness gaps, not buildability ones - see this file's
-    // docstring and parse.ts's nextQuestions. Surfaced separately so a
-    // reader can tell "this run is stuck" from "this run just hasn't been
-    // asked about refresh cadence yet".
     missingAudience: parsed.missingAudience.map((f) => f.key),
   };
 }
@@ -140,24 +140,28 @@ async function handlePost(req: NextRequest) {
     brief?: string;
     loopCount?: number;
     fields?: Record<string, unknown>;
+    mode?: string;
   }>;
 
   const brief = String(body.input?.brief || "").trim();
   const loopCount = readLoopCount(body);
+  const mode = readMode(body);
 
   if (!brief) {
     return NextResponse.json<AgentResponse>({
       status: "failed",
       message: "No brief was supplied, so there is nothing to read.",
-      metadata: { loopCount },
+      metadata: { loopCount, mode },
     });
   }
 
   // Everything below calls MCP tools somewhere in its call graph
-  // (groundQuestions, createIntakeRequest -> resolveIntakeQueue/
-  // resolveFieldMap/writeCustomFields) - wrapped so every one of those
-  // calls, request and response, ends up in metadata.toolCalls for the UI,
-  // without any of those functions needing to know they're being watched.
+  // (groundQuestion, findUnmappableFilter, createIntakeRequest ->
+  // resolveIntakeQueue/resolveFieldMap/writeCustomFields) - wrapped so every
+  // one of those calls, request and response, ends up in metadata.toolCalls
+  // for the UI, without any of those functions needing to know they're
+  // being watched. Demo mode's own path (demoIntakeOutcome) makes none of
+  // these calls at all - see this file's docstring.
   const { result, toolCalls } = await withToolCallLog(body.runId, "intake", async (): Promise<AgentResponse> => {
     // A rework loop carries the fields already confirmed, so the marketer is
     // never asked twice for the same thing.
@@ -165,14 +169,17 @@ async function handlePost(req: NextRequest) {
     // extractIntake prefers a configured LLM to read the brief (Bedrock /
     // Anthropic / Ollama - see lib/llm) and ALWAYS falls back to the pure
     // deterministic parseBrief when no LLM is configured or the call fails.
-    // Either way it returns the same ParsedIntake shape, run through
-    // parseBrief's own validation, so every downstream invariant (provenance,
-    // missing/required, the loop cap) is unchanged. `extraction.source` records
-    // which path actually ran.
+    // Either way it returns the same ParsedIntake shape. `extraction.source`
+    // records which path actually ran.
     const extraction = await extractIntake(brief, body.input?.fields || {});
     const parsed = extraction.parsed;
-    const questions = nextQuestions(parsed, 2);
-    const grounding = await groundQuestions(questions.map((q) => q.label));
+
+    // Demo mode probes the "tapdemo" sandbox explicitly; Governed mode
+    // leaves the sandbox unset, same as every other AEP call in this app
+    // today. See buildability.ts / aep.ts's probeSchemas.
+    const sandbox = mode === "demo" ? "tapdemo" : undefined;
+    const unmappable: UnmappableFilter | null = await findUnmappableFilter(parsed.fields, brief, "intake", sandbox);
+    const grounding = await groundQuestion(unmappable?.label ?? null);
 
     // Which extraction path actually ran (llm vs deterministic), the model,
     // and why we fell back if we did - folded into every response's metadata
@@ -192,65 +199,74 @@ async function handlePost(req: NextRequest) {
         : undefined;
 
     // B1's verdict, owned by the agent instead of looped onto the marketer.
-    if (loopCount >= LOOP_LIMIT && questions.length) {
+    if (loopCount >= LOOP_LIMIT && unmappable) {
       return {
         status: "failed",
         message:
-          `Still missing ${questions.map((q) => q.label).join(" and ")} after ${loopCount} rounds. ` +
-          `Past ${LOOP_LIMIT} rounds this is the agent failing to read the brief, not the marketer ` +
-          `failing to write it, so it escalates rather than asking a third time.`,
+          `Still can't confirm ${unmappable.label} maps to a real field in customer data after ${loopCount} rounds. ` +
+          `Past ${LOOP_LIMIT} rounds this is the agent failing to resolve it, not the marketer failing to answer, ` +
+          "so it escalates rather than asking again.",
         output: {
           brief,
           ...summarise(parsed),
           loopCount,
+          mode,
           grounding: { grounded: grounding.grounded, reason: grounding.reason },
         },
-        metadata: { loopCount, loopLimitReached: true, ...extractionMeta },
+        metadata: { loopCount, loopLimitReached: true, mode, ...extractionMeta },
       };
     }
 
-    // Something required is genuinely absent. Ask for it, and only it.
-    if (questions.length) {
+    // A filter in the brief genuinely doesn't map to anything in customer
+    // data. Ask about exactly that one, and nothing else - never silently
+    // drop the condition and build a broader audience.
+    if (unmappable) {
       return {
         status: "needs_input",
-        message: questions.map((q) => q.ask || `What is the ${q.label.toLowerCase()}?`).join(" "),
+        message: unmappable.ask,
         output: {
           brief,
           ...summarise(parsed),
-          // The next round arrives with this incremented and the fields so far,
-          // so the marketer answers two questions instead of the whole form.
+          // The next round arrives with this incremented and the fields so
+          // far, so the marketer answers one specific question, not the
+          // whole form.
           loopCount: loopCount + 1,
-          questions: questions.map((q) => ({
-            key: q.key,
-            label: q.label,
-            ask: q.ask ?? null,
-            options: q.options ?? null,
-            optionsPartial: q.optionsPartial ?? false,
-          })),
+          mode,
+          questions: [{ key: unmappable.key, label: unmappable.label, ask: unmappable.ask, options: null, optionsPartial: false }],
           grounding,
         },
-        metadata: { loopCount: loopCount + 1, askedFor: questions.map((q) => q.key), ...extractionMeta },
+        metadata: { loopCount: loopCount + 1, askedFor: [unmappable.key], mode, ...extractionMeta },
       };
     }
 
     /*
-     * Complete enough to build. Create the Workfront request.
+     * Complete enough to build.
      *
-     * createIntakeRequest reports what it WOULD have created when the call fails,
-     * which is the honest outcome while nobody has signed in to the official MCP:
-     * Workfront writes need OAuth, and 44 of its 94 tools are writes a Workfront
-     * admin must enable per tenant. A visible dry run beats a run that reads as a
-     * success and wrote nothing.
+     * Governed mode: create the Workfront request. createIntakeRequest
+     * reports what it WOULD have created when the call fails, which is the
+     * honest outcome while nobody has signed in to the official MCP:
+     * Workfront writes need OAuth, and 44 of its 94 tools are writes a
+     * Workfront admin must enable per tenant. A visible dry run beats a run
+     * that reads as a success and wrote nothing.
+     *
+     * Demo mode: never files a Workfront request at all - demoIntakeOutcome
+     * is a pure, zero-call function returning the identical CreateOutcome
+     * shape, so every downstream reader (the UI, Review, this route's own
+     * message below) handles both modes through one code path.
      */
-    const outcome = await createIntakeRequest({ runId: body.runId, intake: parsed.fields, brief });
+    const outcome = mode === "demo"
+      ? demoIntakeOutcome(parsed.fields, brief)
+      : await createIntakeRequest({ runId: body.runId, intake: parsed.fields, brief });
     const stated = parsed.extracted.filter((f) => f.from === "stated").length;
     const message =
       `Extracted ${stated} stated and ${parsed.inferred.length} inferred field(s) from the brief. ` +
-      (outcome.created
-        ? outcome.reused
-          ? `Reusing the Workfront intake request already created for this run (${outcome.objCode} ${outcome.objId}) - not creating a second one.`
-          : `Created the Workfront intake request (${outcome.objCode} ${outcome.objId}).`
-        : `Dry run — did not create the Workfront request: ${outcome.reason}`);
+      (mode === "demo"
+        ? "Demo mode — building the audience definition only; no Workfront request filed."
+        : outcome.created
+          ? outcome.reused
+            ? `Reusing the Workfront intake request already created for this run (${outcome.objCode} ${outcome.objId}) - not creating a second one.`
+            : `Created the Workfront intake request (${outcome.objCode} ${outcome.objId}).`
+          : `Dry run — did not create the Workfront request: ${outcome.reason}`);
 
     return {
       status: "completed",
@@ -260,6 +276,11 @@ async function handlePost(req: NextRequest) {
         brief,
         ...summarise(parsed),
         loopCount,
+        mode,
+        // Marketer-facing label for the audience card - null in Governed
+        // mode, where the existing Awaiting approval / Approved language
+        // already applies.
+        label: mode === "demo" ? "Demo – not approved" : null,
         workfront: outcome,
         grounding,
         // Named plainly so Agent 2 reads them rather than re-deriving them.
@@ -268,6 +289,7 @@ async function handlePost(req: NextRequest) {
       },
       metadata: {
         loopCount,
+        mode,
         ...extractionMeta,
         inferredCount: parsed.inferred.length,
         // A run where the agent guessed four fields is not the same as one where
@@ -278,7 +300,8 @@ async function handlePost(req: NextRequest) {
         // True only when this run's Workfront issue was found already
         // created (a retry after the original create succeeded but its own
         // result never got recorded) rather than written fresh this time -
-        // see workfront.ts's findPriorSuccess.
+        // see workfront.ts's findPriorSuccess. Always false in Demo mode,
+        // which never creates anything to find.
         workfrontReused: outcome.created ? !!outcome.reused : false,
       },
     };
