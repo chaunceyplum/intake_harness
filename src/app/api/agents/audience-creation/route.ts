@@ -9,6 +9,8 @@ import {
   nightlyCutoff,
   neededAttributes,
   criteriaKeywords,
+  estimateSegmentSize,
+  type SegmentSizeEstimate,
 } from "@/lib/agents/audience/aep";
 import { resolveActivationIntent, activateAudience, type ActivationOutcome } from "@/lib/agents/audience/activation";
 import { groundPqlGuidance, type PqlGuidance } from "@/lib/agents/review/pql-context";
@@ -68,6 +70,16 @@ import {
  * `destination` field (or, for older runs, the brief's free text) names a
  * real destination - see activation.ts's resolveActivationIntent - build
  * path and attribute checks behave exactly as they always have otherwise.
+ *
+ * DEMO VS. GOVERNED MODE (`input.mode`, carried forward from Intake via
+ * Review's `...input` spread - defaulting to "governed" when absent, so
+ * every existing caller keeps today's behavior unchanged): Demo mode probes
+ * AEP, searches for an existing segment, and creates a segment (when
+ * enabled) against the "tapdemo" sandbox explicitly, NEVER reuses Review's
+ * prior probe/segment-match (Review wasn't told about Demo mode, so its
+ * reads are against whatever sandbox it defaulted to - not safe to reuse
+ * here), and activation is skipped entirely regardless of what the brief
+ * asks for - no destination writes, no spend. Governed mode is unchanged.
  */
 
 export interface AudienceCreationInput {
@@ -108,6 +120,15 @@ export interface AudienceCreationOutput {
    * is what happened" without inspecting a status string.
    */
   activation?: ActivationOutcome;
+  /** Threaded from Intake via Review's `...input` spread. "governed" when absent (every existing caller). */
+  mode: "demo" | "governed";
+  /** Marketer-facing label for the audience card - null in Governed mode. */
+  label: string | null;
+  /**
+   * B3's predicted count, or an honest "not available" - never an error,
+   * never a fabricated zero. See aep.ts's estimateSegmentSize.
+   */
+  sizeEstimate: SegmentSizeEstimate;
 }
 
 /** The one statusMessage line for whatever activateAudience decided - only ever called when activation was actually requested. */
@@ -235,6 +256,12 @@ async function handlePost(req: NextRequest) {
       .filter(Boolean),
   );
 
+  // "demo" only when explicitly carried forward (from Intake, via Review's
+  // `...input` spread) - every other value, including absent, is "governed",
+  // today's unchanged default. See this file's docstring.
+  const mode: "demo" | "governed" = input.mode === "demo" ? "demo" : "governed";
+  const sandbox = mode === "demo" ? "tapdemo" : undefined;
+
   // Every read below (probeSchemas, findExistingSegment) calls MCP tools -
   // wrapped so every call, request and response, ends up in
   // metadata.toolCalls for the UI.
@@ -254,13 +281,17 @@ async function handlePost(req: NextRequest) {
     // attributes this audience needs (Review derives `needed` from the same
     // neededAttributes(), so the sets normally match - but if they diverge,
     // re-probe rather than answer from a probe that checked different fields).
+    // NEVER reused in Demo mode: Review wasn't told about Demo mode, so its
+    // probe ran against whatever sandbox it defaulted to, not "tapdemo" -
+    // reusing it here would silently answer for the wrong sandbox.
     const priorProbe = priorReview?.schemaProbe;
     const priorCoversNeeded =
+      mode !== "demo" &&
       !!priorProbe &&
       priorProbe.conclusive &&
       needed.every((k) => k in (priorProbe.found ?? {}));
     const reusedProbe = priorCoversNeeded;
-    const probe: SchemaProbe = priorCoversNeeded ? priorProbe! : await probeSchemas("audience_creation", needed);
+    const probe: SchemaProbe = priorCoversNeeded ? priorProbe! : await probeSchemas("audience_creation", needed, sandbox);
 
     /*
      * AN INCONCLUSIVE PROBE IS NOT A MISSING ATTRIBUTE.
@@ -333,6 +364,7 @@ async function handlePost(req: NextRequest) {
             pqlSynthesis,
             [fields.campaign_name, fields.audience_description].filter(Boolean).map(String).join(" — ") ||
               "Audience (drafted by Agent 3)",
+            sandbox,
           )
         : null;
 
@@ -357,10 +389,11 @@ async function handlePost(req: NextRequest) {
     // aligned to this exact derivation), so a successful "no match" from
     // Review is as authoritative as one we'd compute here - reusing it
     // saves the adobe_list_segments read. A failed read (read: false) is not
-    // reused; we search ourselves.
+    // reused; we search ourselves. NEVER reused in Demo mode, same reason as
+    // the probe above: Review's search wasn't scoped to "tapdemo".
     const priorSegment: SegmentMatch | undefined = priorReview?.segmentMatch;
-    const reusedSegment = !!priorSegment?.read;
-    const existing = reusedSegment ? priorSegment! : await findExistingSegment("audience_creation", terms);
+    const reusedSegment = mode !== "demo" && !!priorSegment?.read;
+    const existing = reusedSegment ? priorSegment! : await findExistingSegment("audience_creation", terms, sandbox);
 
     // Off by default - see this file's docstring and activation.ts. Only
     // runs the destination check/write when intake's own `destination`
@@ -369,20 +402,37 @@ async function handlePost(req: NextRequest) {
     // inferred destination is treated as absent here, which falls back to
     // detectActivationIntent's stricter explicit-verb brief parsing rather
     // than trusting a value nobody confirmed as an activation command.
+    //
+    // NEVER runs in Demo mode, regardless of what the brief asks for - "no
+    // activation to destinations, no spend" is the whole point of Demo mode
+    // (see this file's docstring). activationIntent is still resolved (for
+    // the statusMessage note below), just never acted on.
     const destinationField = inferredFieldKeys.has("destination") ? undefined : fields.destination;
     const activationIntent = resolveActivationIntent(brief, destinationField);
-    const activation = activationIntent.requested
-      ? await activateAudience("audience_creation", {
-          segmentId: existing.id,
-          segmentName: existing.name,
-          destinationName: activationIntent.destinationName,
-        })
-      : undefined;
+    const activation =
+      mode !== "demo" && activationIntent.requested
+        ? await activateAudience("audience_creation", {
+            segmentId: existing.id,
+            segmentName: existing.name,
+            destinationName: activationIntent.destinationName,
+          })
+        : undefined;
 
     // Only a CONCLUSIVE "no" opens an attribute request. "undetermined" must not:
     // opening the 2.7a branch because we failed to look is the quarter-long tail
     // started by our own blind spot.
     const attrState = await attributeRequestState(body.runId, attributesAvailable !== false, missing);
+
+    // B3: the audience's predicted size, once a segment id exists - either
+    // reused (existing.id) or just created (segmentCreation). Every failure
+    // (the known gateway 404 included) is caught inside estimateSegmentSize
+    // and reported as unavailable, never an error and never a fabricated
+    // zero - see that function's docstring.
+    const segmentIdForEstimate =
+      existing.id || (segmentCreation && segmentCreation.attempted && segmentCreation.created ? segmentCreation.segmentId : null);
+    const sizeEstimate: SegmentSizeEstimate = segmentIdForEstimate
+      ? await estimateSegmentSize("audience_creation", segmentIdForEstimate, sandbox)
+      : { available: false, reason: "no segment id yet to estimate from" };
 
     const statusMessage = [
       path.buildPath === "fac"
@@ -414,7 +464,14 @@ async function handlePost(req: NextRequest) {
             : `Drafted a candidate PQL expression (fields verified present: ${pqlSynthesis.fieldsUsed.join(", ")}) - see pqlSynthesis in metadata. Draft for a human to build from; segment creation is off (set AUDIENCE_CREATE_SEGMENT=true to enable).`
           : `No PQL expression drafted: ${pqlSynthesis.reason}.`
         : "",
-      activation ? formatActivationMessage(activation) : "",
+      activation
+        ? formatActivationMessage(activation)
+        : mode === "demo" && activationIntent.requested
+          ? `Demo mode: activation to "${activationIntent.destinationName ?? "the requested destination"}" was skipped - no activation to destinations, no spend.`
+          : "",
+      sizeEstimate.available
+        ? `Estimated audience size: ${sizeEstimate.count.toLocaleString()}.`
+        : `Size available after next evaluation (${sizeEstimate.reason}).`,
       attrState.note,
       cutoff.note,
     ]
@@ -431,6 +488,9 @@ async function handlePost(req: NextRequest) {
       },
       identityGap: gap,
       statusMessage,
+      mode,
+      label: mode === "demo" ? "Demo – not approved" : null,
+      sizeEstimate,
       ...(activation ? { activation } : {}),
     };
 
@@ -495,6 +555,13 @@ async function handlePost(req: NextRequest) {
         nightlyCutoff: cutoff,
         activationRequested: activationIntent.requested,
         activationDestination: activationIntent.destinationName,
+        // True only when Demo mode actually suppressed an activation the
+        // brief asked for - distinct from "activation wasn't requested at
+        // all" (activationRequested: false above).
+        activationSkippedForDemo: mode === "demo" && activationIntent.requested,
+        mode,
+        sandboxOverride: sandbox ?? null,
+        sizeEstimate,
       },
     };
   });
