@@ -359,6 +359,7 @@ export async function createSegmentFromPql(
   taskId: TaskId,
   synthesis: PqlSynthesis,
   name: string,
+  sandbox?: string,
 ): Promise<SegmentCreation> {
   if (!synthesis.synthesized || !synthesis.pql) {
     return { attempted: false, reason: "no verified PQL expression to create a segment from" };
@@ -381,6 +382,7 @@ export async function createSegmentFromPql(
         // reported (created:false), not thrown.
         expression: { type: "PQL", format: "pql/text", value: synthesis.pql },
         description: `Drafted by Agent 3 from verified fields: ${synthesis.fieldsUsed.join(", ")}`,
+        ...(sandbox ? { sandbox } : {}),
       },
     );
     const segmentId = String(result?.id || result?.segmentId || result?.data?.id || "");

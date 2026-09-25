@@ -27,11 +27,25 @@ describe("Audience Creation's approval-gate opt-out", () => {
   });
 });
 
-describe("Broken segment-estimate tools stay out of Agent 3's allowlist", () => {
-  it("audience_creation cannot call adobe_create_segment_estimate/adobe_get_segment_estimate", () => {
+describe("segment-estimate tools re-granted to Agent 3 (explicit product direction, executive demo)", () => {
+  // Reverses the prior decision (these were dropped once already, for the
+  // same verified-404 reason cited in aep.ts's docstring) - re-granted so
+  // estimateSegmentSize can try the call and catch that failure honestly
+  // per-run, rather than the allowlist itself keeping the app from ever
+  // trying again once the gateway bug is fixed.
+  it("audience_creation can call adobe_create_segment_estimate/adobe_get_segment_estimate", () => {
     const agent = PIPELINE.find((a) => a.name === "audience_creation");
-    expect(agent?.allowedTools).not.toContain("adobe_create_segment_estimate");
-    expect(agent?.allowedTools).not.toContain("adobe_get_segment_estimate");
+    expect(agent?.allowedTools).toContain("adobe_create_segment_estimate");
+    expect(agent?.allowedTools).toContain("adobe_get_segment_estimate");
+  });
+});
+
+describe("intake gets read-only AEP schema access (executive demo: buildability check replaces required-field gating)", () => {
+  it("intake can probe schemas (adobe_list_schemas/adobe_get_schema/adobe_get_union_schema/adobe_get_field_group)", () => {
+    const agent = PIPELINE.find((a) => a.name === "intake");
+    for (const tool of ["adobe_list_schemas", "adobe_get_schema", "adobe_get_union_schema", "adobe_get_field_group"]) {
+      expect(agent?.allowedTools).toContain(tool);
+    }
   });
 });
 

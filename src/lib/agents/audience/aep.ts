@@ -7,19 +7,17 @@
  *
  * Every function here is a READ. Nothing creates a segment.
  *
- * NO COUNT ESTIMATION HERE, ON PURPOSE. This module used to also call
- * adobe_create_segment_estimate/adobe_get_segment_estimate for B3's "predict
- * the count before the marketer sees it." Verified live against 4 different
- * real, valid segment IDs (confirmed valid via adobe_get_segment) - every one
- * 404s identically, because the estimate tool hits the wrong upstream URL
- * (.../estimate suffix that the gateway's adobe_get_segment path does not
- * use). That is a bug in the gateway's tool, not this app, and not something
- * fixable from here - so rather than keep a call site that always fails (and
- * a UI line that always reads "No count yet"), it was removed. The effort
- * that would have gone into working around it instead went into
- * ATTRIBUTE_CUES/neededAttributes below: predicting a count nobody can trust
- * is worth less than being right about which fields an audience actually
- * needs.
+ * COUNT ESTIMATION IS BACK, RE-ADDED ON EXPLICIT PRODUCT DIRECTION (see
+ * estimateSegmentSize below), after having been removed entirely: verified
+ * live against 4 different real, valid segment IDs (confirmed valid via
+ * adobe_get_segment), the estimate tool 404s identically on every one,
+ * because it hits the wrong upstream URL (a .../estimate suffix the
+ * gateway's adobe_get_segment path does not use) - a bug in the gateway's
+ * tool, not this app, and not fixable from here. Rather than leave the call
+ * site removed forever, it is tried again: any failure - the known 404
+ * included - is caught and reported as "not available", never a run-failing
+ * error and never a fabricated count. The day the gateway bug is fixed, this
+ * starts reporting a real number with nothing else to change.
  *
  * Tool names and argument shapes below are verified against the live server -
  * 238 tools, tools/list read 16 Sep 2026. Every one of these takes an optional
@@ -298,13 +296,26 @@ function sandboxFrom(records: Array<{ id: string }>): string | null {
  * "missing", and the caller must not open an attribute request off it.
  *
  * `taskId` is whichever pipeline task is calling this - originally always
- * "audience_creation", now also "review" (see agents/review/aep-context.ts),
- * which asks the identical question one step earlier so the brief handed to
- * Agent 3 already answers it. Passed through verbatim to callMcpTool so the
- * allowlist check in mcp-client.ts is enforced against the REAL caller, not
- * a hardcoded one.
+ * "audience_creation", now also "review" (see agents/review/aep-context.ts)
+ * and "intake" (agents/intake/buildability.ts), which ask the identical
+ * question earlier so the brief handed downstream already answers it.
+ * Passed through verbatim to callMcpTool so the allowlist check in
+ * mcp-client.ts is enforced against the REAL caller, not a hardcoded one.
+ *
+ * `sandboxOverride`, when given, is passed through to every call below as
+ * the `sandbox` argument - used by Demo mode to probe the "tapdemo" sandbox
+ * explicitly rather than whatever the connected org defaults to (see
+ * audience-creation/route.ts and buildability.ts). Omitted, the call
+ * behaves exactly as before. Named distinctly from the `sandbox` local
+ * variable below (which reads back WHICH sandbox actually answered, for
+ * the returned SchemaProbe) - the two are different things that happen to
+ * share a name in every other tool in this file.
  */
-export async function probeSchemas(taskId: TaskId, needed: string[]): Promise<SchemaProbe> {
+export async function probeSchemas(
+  taskId: TaskId,
+  needed: string[],
+  sandboxOverride?: string,
+): Promise<SchemaProbe> {
   // Nothing to check means nothing to open a GTO request for - and no
   // reason to spend a dozen-plus MCP calls opening schemas to confirm that.
   if (!needed.length) {
@@ -336,7 +347,10 @@ export async function probeSchemas(taskId: TaskId, needed: string[]): Promise<Sc
    * reachable.
    */
   try {
-    const union = await callMcpTool<unknown>(taskId, "adobe_get_union_schema", { class_id: PROFILE_UNION_CLASS });
+    const union = await callMcpTool<unknown>(taskId, "adobe_get_union_schema", {
+      class_id: PROFILE_UNION_CLASS,
+      ...(sandboxOverride ? { sandbox: sandboxOverride } : {}),
+    });
     for (const f of fieldNames(union)) fields.add(f);
     if (fields.size > 0) {
       unionResolved = true;
@@ -356,7 +370,10 @@ export async function probeSchemas(taskId: TaskId, needed: string[]): Promise<Sc
   let pendingRefCount = 0;
   if (!unionResolved) {
     try {
-      const list = await callMcpTool<unknown>(taskId, "adobe_list_schemas", { limit: "50" });
+      const list = await callMcpTool<unknown>(taskId, "adobe_list_schemas", {
+        limit: "50",
+        ...(sandboxOverride ? { sandbox: sandboxOverride } : {}),
+      });
       records = schemaRecords(list);
     } catch (err) {
       return {
@@ -372,7 +389,12 @@ export async function probeSchemas(taskId: TaskId, needed: string[]): Promise<Sc
     // Up to SCHEMA_SAMPLE independent schema reads, fanned out together
     // instead of one at a time — none depends on another's result.
     const schemaResults = await Promise.allSettled(
-      candidates.map((c) => callMcpTool<unknown>(taskId, "adobe_get_schema", { schema_id: c.id })),
+      candidates.map((c) =>
+        callMcpTool<unknown>(taskId, "adobe_get_schema", {
+          schema_id: c.id,
+          ...(sandboxOverride ? { sandbox: sandboxOverride } : {}),
+        }),
+      ),
     );
     const pendingRefs = new Set<string>();
     for (const result of schemaResults) {
@@ -400,7 +422,10 @@ export async function probeSchemas(taskId: TaskId, needed: string[]): Promise<Sc
       // group is independent of the others, so they fan out together.
       const refResults = await Promise.allSettled(
         [...pendingRefs].slice(0, FIELD_GROUP_SAMPLE).map((ref) =>
-          callMcpTool<unknown>(taskId, "adobe_get_field_group", { field_group_id: ref }),
+          callMcpTool<unknown>(taskId, "adobe_get_field_group", {
+            field_group_id: ref,
+            ...(sandboxOverride ? { sandbox: sandboxOverride } : {}),
+          }),
         ),
       );
       for (const result of refResults) {
@@ -472,10 +497,14 @@ export type SegmentMatch = {
  * anything, so it is tried first.
  *
  * `taskId`: see probeSchemas above - same reasoning, same requirement.
+ * `sandbox`: see probeSchemas above - same pass-through, same default (unset).
  */
-export async function findExistingSegment(taskId: TaskId, terms: string[]): Promise<SegmentMatch> {
+export async function findExistingSegment(taskId: TaskId, terms: string[], sandbox?: string): Promise<SegmentMatch> {
   try {
-    const result = await callMcpTool<unknown>(taskId, "adobe_list_segments", { limit: "50" });
+    const result = await callMcpTool<unknown>(taskId, "adobe_list_segments", {
+      limit: "50",
+      ...(sandbox ? { sandbox } : {}),
+    });
     const rows = (Array.isArray(result) ? result : ((result as { segments?: unknown[]; data?: unknown[] })?.segments
       || (result as { data?: unknown[] })?.data || [])) as Array<Record<string, unknown>>;
 
@@ -662,4 +691,57 @@ export function nightlyCutoff(now = new Date()): {
       : `The 21:45 run has passed (${Math.abs(minutes)} minute(s) ago). Anything from here lands tomorrow night, ` +
         "so batch the outstanding fixes rather than spending a night on each.",
   };
+}
+
+export type SegmentSizeEstimate =
+  | { available: true; count: number }
+  | { available: false; reason: string };
+
+/**
+ * B3: predict the audience's size, once a segment id exists (an existing
+ * match or one Agent 3 just created).
+ *
+ * See this file's top docstring for the full history - this tool is
+ * verified to 404 today, a gateway-side bug this app cannot fix. Re-added
+ * anyway, on explicit product direction, rather than left removed forever:
+ * every failure (that 404 included) is caught here and reported as
+ * unavailable, never surfaced as an error and never guessed at as a zero.
+ * The caller (audience-creation/route.ts) shows a plain "size available
+ * after next evaluation" message when `available` is false - never an
+ * error, never a zero.
+ *
+ * ARGUMENT SHAPE IS A BEST-EFFORT GUESS, not verified against a live call
+ * the way every other tool in this file is (this one was never wired up
+ * long enough to confirm it) - `segment_id` mirrors the convention
+ * adobe_get_schema/adobe_create_segment use for their own id arguments. If
+ * the real shape differs, the call still fails cleanly into the `available:
+ * false` branch below; no run-safety property depends on getting this
+ * exactly right, only the (currently unreachable) success path does.
+ */
+export async function estimateSegmentSize(
+  taskId: TaskId,
+  segmentId: string,
+  sandbox?: string,
+): Promise<SegmentSizeEstimate> {
+  if (!segmentId) return { available: false, reason: "no segment id to estimate yet" };
+
+  const args = { segment_id: segmentId, ...(sandbox ? { sandbox } : {}) };
+  try {
+    // Two-step, same shape as the other AEP job-style tools in this estate:
+    // create the estimate job, then read it back.
+    await callMcpTool<unknown>(taskId, "adobe_create_segment_estimate", args);
+    const result = await callMcpTool<{ count?: unknown; estimatedProfileCount?: unknown; total?: unknown }>(
+      taskId,
+      "adobe_get_segment_estimate",
+      args,
+    );
+    const raw = result?.count ?? result?.estimatedProfileCount ?? result?.total;
+    const count = Number(raw);
+    if (!Number.isFinite(count) || count < 0) {
+      return { available: false, reason: "the estimate tool returned no usable count" };
+    }
+    return { available: true, count };
+  } catch (err) {
+    return { available: false, reason: (err as Error).message };
+  }
 }

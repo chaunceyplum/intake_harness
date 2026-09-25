@@ -84,6 +84,18 @@ export const PIPELINE: AgentDefinition[] = [
     allowedTools: [
       "search_adobe_knowledge",
       ...intakeWorkfrontToolNames(),
+      // Read-only AEP schema access, added for the executive-demo intake
+      // rework: with the six baseline fields no longer required (see
+      // campaign-brief.ts), the ONLY thing left that should pause a run is
+      // a filter the brief names with no matching field in customer data -
+      // and answering that means Intake can now run the SAME schema probe
+      // Review/Audience Creation already run (see agents/intake/
+      // buildability.ts, aep.ts's probeSchemas/neededAttributes). Identical
+      // grant to review's below, for the identical reason.
+      "adobe_list_schemas",
+      "adobe_get_schema",
+      "adobe_get_union_schema",
+      "adobe_get_field_group",
     ],
     contextAccess: [], // first in the pipeline — nothing prior to see
   },
@@ -169,13 +181,21 @@ export const PIPELINE: AgentDefinition[] = [
       // B5 (3.1): decide FAC vs. AEP rule builder.
       //
       // adobe_create_segment_estimate/adobe_get_segment_estimate (B6 count
-      // prediction) are deliberately NOT granted here any more — verified
-      // live against 4 real segment IDs that the estimate tool 404s on every
-      // one of them (a gateway-side bug, not fixable from this app — see
-      // lib/agents/audience/aep.ts's docstring). A tool this agent can no
-      // longer usefully call has no reason to stay in its allowlist.
+      // prediction) are RE-GRANTED here, on explicit product direction for
+      // the executive demo's audience card ("estimated size as a large
+      // number, or a plain fallback if it can't be fetched" - never an
+      // error, never a zero). These were dropped once already, verified
+      // live against 4 real segment IDs that the estimate tool 404s on
+      // every one of them (a gateway-side bug, not fixable from this app —
+      // see lib/agents/audience/aep.ts's docstring) - re-granting them does
+      // not undo that finding, it just means estimateSegmentSize (aep.ts)
+      // tries the call and catches that same failure honestly instead of
+      // never trying at all, and starts working for real the day the
+      // gateway bug is fixed with nothing else to change.
       // adobe_get_segment was here but is never called (see the identical
       // note on review's grant above) - dropped.
+      "adobe_create_segment_estimate",
+      "adobe_get_segment_estimate",
       "adobe_list_segments",
       "adobe_create_segment",
       // B4: check whether the attributes an audience needs already exist
