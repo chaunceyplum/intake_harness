@@ -279,3 +279,11 @@ describe("createSegmentFromPql - writes only from a verified expression, honest 
     expect(callMcpTool).not.toHaveBeenCalled();
   });
 });
+
+describe("isFieldPresent - full-path probe evidence", () => {
+  it("verifies a PQL path against evidence that is itself a full path", () => {
+    expect(isFieldPresent("_taplondonptrsd.SEPeligible", ["_taplondonptrsd.SEPeligible"])).toBe(true);
+    expect(isFieldPresent("SEPeligible", ["_taplondonptrsd.SEPeligible"])).toBe(true);
+    expect(isFieldPresent("_taplondonptrsd.eligible", ["_taplondonptrsd.SEPeligible"])).toBe(false);
+  });
+});

@@ -126,6 +126,42 @@ const REQUEST_STOPWORDS = new Set([
   "exist", "exists", "existing", "need", "needs", "want", "wants", "build", "please",
 ]);
 
+/** Words that never name a field on their own - a brief phrase may not start or end on one. */
+const CRITERIA_STOPWORDS = new Set([
+  ...REQUEST_STOPWORDS,
+  "a", "an", "of", "or", "is", "are", "be", "in", "on", "to", "by", "who", "have", "has", "not", "all", "any",
+  "their", "them", "they", "profile", "profiles", "customer", "customers", "people", "users",
+]);
+
+const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "").replace(/s$/, "");
+
+/**
+ * Fields the brief names by what they're called, beyond the fixed cues above.
+ *
+ * ATTRIBUTE_CUES only knows the categories someone thought to write down, so
+ * "SEP eligible" matched nothing and the tenant's real `SEPeligible` field was
+ * never looked for. This reads the brief the way a person scanning the
+ * schema would: every 1-3 word phrase, run together, compared to each field's
+ * leaf name with case and punctuation ignored ("SEP eligible" ->
+ * "sepeligible" == `SEPeligible`; "email address" == `emailAddress`).
+ * Exact-match only - no substring or fuzzy match - so a field only turns up
+ * when the brief really does name it. Single words need 4+ letters, and no
+ * phrase starts or ends on a stopword, so "are" or "profiles" never match.
+ */
+export function matchCriteriaFields(criteria: string, fields: ProfileField[]): ProfileField[] {
+  const words = String(criteria || "").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  const phrases = new Set<string>();
+  for (let i = 0; i < words.length; i++) {
+    for (let n = 1; n <= 3 && i + n <= words.length; n++) {
+      const run = words.slice(i, i + n);
+      if (CRITERIA_STOPWORDS.has(run[0]) || CRITERIA_STOPWORDS.has(run[n - 1])) continue;
+      if (n === 1 && run[0].length < 4) continue;
+      phrases.add(normalize(run.join("")));
+    }
+  }
+  return fields.filter((f) => phrases.has(normalize(leafOf(f.path)))).slice(0, 12);
+}
+
 /**
  * Meaningful, distinctive words from a brief/audience description - the
  * vocabulary an existing, already-built segment's own NAME is likely to
@@ -209,7 +245,10 @@ export type SchemaProbe = {
   /** How many distinct field names we saw. */
   fieldCount: number;
   found: Record<string, boolean>;
+  /** Full dotted paths of the fields that answered - cue hits, then fields the brief names (matchCriteriaFields). */
   evidence: string[];
+  /** XDM type of each evidence path, so PQL compares a boolean to true rather than "true". */
+  fieldTypes?: Record<string, string | null>;
 };
 
 /** Titles and ids from the schema list. */
@@ -231,21 +270,41 @@ function schemaRecords(result: unknown): Array<{ title: string; id: string }> {
 }
 
 /** Every property name in a schema (or field group) document, however deeply nested. */
-function fieldNames(schema: unknown): string[] {
-  const out = new Set<string>();
-  const walk = (v: unknown, depth = 0) => {
-    if (depth > 12 || v == null || typeof v !== "object") return;
+/** A profile field as PQL addresses it: full dotted path plus its XDM type. */
+export type ProfileField = { path: string; type: string | null };
+
+/**
+ * Every field under a schema/field-group document, with its full dotted path
+ * (`_taplondonptrsd.SEPeligible`, not just `SEPeligible`) - PQL needs the
+ * path, and only the path tells two same-named leaves apart. Path segments
+ * come from `properties` keys only, so wrappers like `definitions.customFields`
+ * and `allOf` never leak into it.
+ */
+export function fieldEntries(schema: unknown): ProfileField[] {
+  const out = new Map<string, ProfileField>();
+  const walk = (v: unknown, prefix: string, depth: number) => {
+    if (depth > 16 || v == null || typeof v !== "object") return;
+    if (Array.isArray(v)) { v.forEach((x) => walk(x, prefix, depth + 1)); return; }
     const o = v as Record<string, unknown>;
     const props = o.properties;
     if (props && typeof props === "object") {
-      for (const key of Object.keys(props as Record<string, unknown>)) out.add(key);
+      for (const [key, child] of Object.entries(props as Record<string, unknown>)) {
+        const path = prefix ? `${prefix}.${key}` : key;
+        const c = (child && typeof child === "object" ? child : {}) as Record<string, unknown>;
+        if (!out.has(path)) out.set(path, { path, type: String(c["meta:xdmType"] ?? c.type ?? "") || null });
+        walk(child, path, depth + 1);
+      }
     }
-    for (const val of Object.values(o)) {
-      if (val && typeof val === "object") walk(val, depth + 1);
+    for (const [key, val] of Object.entries(o)) {
+      if (key !== "properties" && val && typeof val === "object") walk(val, prefix, depth + 1);
     }
   };
-  walk(schema);
-  return [...out];
+  walk(schema, "", 0);
+  return [...out.values()];
+}
+
+function leafOf(path: string): string {
+  return path.split(".").pop() || path;
 }
 
 /**
@@ -317,10 +376,13 @@ export async function probeSchemas(
   taskId: TaskId,
   needed: string[],
   sandboxOverride?: string,
+  criteria?: string,
 ): Promise<SchemaProbe> {
   // Nothing to check means nothing to open a GTO request for - and no
   // reason to spend a dozen-plus MCP calls opening schemas to confirm that.
-  if (!needed.length) {
+  // Criteria text is its own reason to look: the brief may name a field no
+  // cue covers (see matchCriteriaFields).
+  if (!needed.length && !criteria?.trim()) {
     return {
       read: true, conclusive: true, error: null, sandbox: null,
       schemaCount: 0, schemasInspected: 0, fieldGroupsInspected: 0, fieldCount: 0, found: {}, evidence: [],
@@ -328,6 +390,13 @@ export async function probeSchemas(
   }
 
   const fields = new Set<string>();
+  const profileFields = new Map<string, ProfileField>();
+  const collect = (doc: unknown) => {
+    for (const f of fieldEntries(doc)) {
+      fields.add(leafOf(f.path));
+      if (!profileFields.has(f.path)) profileFields.set(f.path, f);
+    }
+  };
   let inspected = 0;
   let fieldGroupsInspected = 0;
   let unionResolved = false;
@@ -353,7 +422,18 @@ export async function probeSchemas(
       class_id: PROFILE_UNION_CLASS,
       ...(sandboxOverride ? { sandbox: sandboxOverride } : {}),
     });
-    for (const f of fieldNames(union)) fields.add(f);
+    collect(union);
+    // This tenant's union view comes back as `allOf` $refs to ~90 field
+    // groups with no inline properties, so reading it alone found nothing
+    // and the probe fell back to sampling 6 schemas - which missed fields
+    // like `SEPeligible`. Open every field group the union lists instead:
+    // that IS the sandbox's whole profile, not a sample of it.
+    if (fields.size === 0) {
+      const resolved = await resolveUnionFieldGroups(taskId, union, sandboxOverride);
+      resolved.docs.forEach(collect);
+      fieldGroupsInspected += resolved.docs.length;
+      if (resolved.error) lastError = resolved.error;
+    }
     if (fields.size > 0) {
       unionResolved = true;
       inspected = 1;
@@ -401,7 +481,7 @@ export async function probeSchemas(
     const pendingRefs = new Set<string>();
     for (const result of schemaResults) {
       if (result.status === "fulfilled") {
-        for (const f of fieldNames(result.value)) fields.add(f);
+        collect(result.value);
         // A class-based schema's own document rarely has inline properties -
         // it composes field groups via allOf/$ref (see fieldGroupRefs). Queue
         // those regardless of whether this schema's own walk found anything,
@@ -432,7 +512,7 @@ export async function probeSchemas(
       );
       for (const result of refResults) {
         if (result.status === "fulfilled") {
-          for (const f of fieldNames(result.value)) fields.add(f);
+          collect(result.value);
           fieldGroupsInspected += 1;
         } else {
           lastError = (result.reason as Error).message;
@@ -445,15 +525,21 @@ export async function probeSchemas(
   const conclusive = inspected > 0 && fields.size > 0;
   const found: Record<string, boolean> = {};
   const evidence: string[] = [];
+  const fieldTypes: Record<string, string | null> = {};
   if (conclusive) {
-    const names = [...fields];
+    const all = [...profileFields.values()];
+    const cite = (f: ProfileField) => {
+      if (!(f.path in fieldTypes)) evidence.push(f.path);
+      fieldTypes[f.path] = f.type;
+    };
     for (const key of needed) {
       const cue = ATTRIBUTE_CUES[key];
       if (!cue) { found[key] = false; continue; }
-      const hit = names.find((n) => cue.test(n));
+      const hit = all.find((f) => cue.test(leafOf(f.path)));
       found[key] = !!hit;
-      if (hit) evidence.push(hit);
+      if (hit) cite(hit);
     }
+    if (criteria) matchCriteriaFields(criteria, all).forEach(cite);
   }
 
   return {
@@ -478,8 +564,50 @@ export async function probeSchemas(
     fieldGroupsInspected,
     fieldCount: fields.size,
     found,
-    evidence: evidence.slice(0, 8),
+    evidence: evidence.slice(0, 20),
+    fieldTypes,
   };
+}
+
+/** Field groups opened at once while resolving the union - enough to finish ~90 quickly without flooding the gateway. */
+const UNION_FETCH_CONCURRENCY = 8;
+/** Upper bound on field groups opened from one union view. */
+const UNION_FIELD_GROUP_CAP = 200;
+/** Resolved union field groups per sandbox, reused across agents in the same run for a few minutes. */
+const UNION_CACHE_MS = 5 * 60_000;
+const unionCache = new Map<string, { at: number; docs: unknown[] }>();
+
+async function resolveUnionFieldGroups(
+  taskId: TaskId,
+  union: unknown,
+  sandboxOverride?: string,
+): Promise<{ docs: unknown[]; error: string | null }> {
+  const refs = fieldGroupRefs(union).slice(0, UNION_FIELD_GROUP_CAP);
+  if (!refs.length) return { docs: [], error: null };
+
+  const cacheKey = `${sandboxOverride ?? ""}|${refs.join(",")}`;
+  const cached = unionCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < UNION_CACHE_MS) return { docs: cached.docs, error: null };
+
+  const docs: unknown[] = [];
+  let error: string | null = null;
+  for (let i = 0; i < refs.length; i += UNION_FETCH_CONCURRENCY) {
+    const batch = await Promise.allSettled(
+      refs.slice(i, i + UNION_FETCH_CONCURRENCY).map((ref) =>
+        callMcpTool<unknown>(taskId, "adobe_get_field_group", {
+          field_group_id: ref,
+          ...(sandboxOverride ? { sandbox: sandboxOverride } : {}),
+        }),
+      ),
+    );
+    for (const r of batch) {
+      if (r.status === "fulfilled") docs.push(r.value);
+      else error = (r.reason as Error).message;
+    }
+  }
+  // Only a complete read is cached - a partial one would keep hiding a field.
+  if (!error) unionCache.set(cacheKey, { at: Date.now(), docs });
+  return { docs, error };
 }
 
 export type SegmentMatch = {

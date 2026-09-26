@@ -68,7 +68,7 @@ export async function gatherAepContext(fields: Record<string, string>, brief?: s
   // express, not the intake-form categorization fields around it.
   const criteria = [brief, fields.audience_description].filter(Boolean).join(" ") || fields.campaign_name || "";
   const [schemaProbe, segmentMatch, datasetProbe, pqlGuidance] = await Promise.all([
-    probeSchemas("review", neededAttrs),
+    probeSchemas("review", neededAttrs, undefined, criteria),
     findExistingSegment("review", terms),
     profileDatasetSummary("review"),
     groundPqlGuidance("review", criteria),

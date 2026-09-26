@@ -151,7 +151,9 @@ export function isFieldPresent(field: string, presentNames: string[]): boolean {
     .pop();
   if (!leaf) return false;
   const target = leaf.toLowerCase();
-  return presentNames.some((n) => n.toLowerCase() === target);
+  // presentNames are full dotted paths now (aep.ts's probe evidence); a
+  // bare leaf name from an older probe still compares the same way.
+  return presentNames.some((n) => (n.split(".").pop() || n).toLowerCase() === target);
 }
 
 /**
@@ -216,7 +218,9 @@ export async function synthesizePql(
     [
       `Audience criteria: ${criteria.trim()}`,
       "",
-      `Available profile field names (use ONLY these): ${presentNames.join(", ")}`,
+      `Available profile fields - full PQL paths with XDM type (use ONLY these): ${presentNames
+        .map((n) => (probe.fieldTypes?.[n] ? `${n} (${probe.fieldTypes[n]})` : n))
+        .join(", ")}`,
       "",
       "PQL function reference (use ONLY this syntax):",
       // Bound the reference so a huge doc can't blow the context; the

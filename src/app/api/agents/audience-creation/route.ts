@@ -276,6 +276,7 @@ async function handlePost(req: NextRequest) {
 
   const { result, toolCalls } = await withToolCallLog(body.runId, "audience_creation", async (): Promise<AgentResponse<AudienceCreationOutput>> => {
     const needed = neededAttributes(fields, brief);
+    const criteria = [brief, fields.audience_description].filter(Boolean).join(" ") || fields.campaign_name || "";
 
     // Reuse Review's probe only when it is conclusive AND covers exactly the
     // attributes this audience needs (Review derives `needed` from the same
@@ -291,7 +292,7 @@ async function handlePost(req: NextRequest) {
       priorProbe.conclusive &&
       needed.every((k) => k in (priorProbe.found ?? {}));
     const reusedProbe = priorCoversNeeded;
-    const probe: SchemaProbe = priorCoversNeeded ? priorProbe! : await probeSchemas("audience_creation", needed, sandbox);
+    const probe: SchemaProbe = priorCoversNeeded ? priorProbe! : await probeSchemas("audience_creation", needed, sandbox, criteria);
 
     /*
      * AN INCONCLUSIVE PROBE IS NOT A MISSING ATTRIBUTE.
@@ -324,7 +325,6 @@ async function handlePost(req: NextRequest) {
     // here - re-grounded independently from Review's own pass at this
     // (audience_creation gets no priorOutputs from review today - see this
     // file's docstring - so it can't just trust review's answer secondhand).
-    const criteria = [brief, fields.audience_description].filter(Boolean).join(" ") || fields.campaign_name || "";
     // Reuse Review's PQL grounding when it actually grounded something -
     // same criteria, same local reference. Re-ground only on the rule-builder
     // path (FAC doesn't use PQL) and only when Review didn't already do it.
