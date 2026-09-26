@@ -56,7 +56,7 @@ const STUCK_AFTER_MS = 4 * 60_000;
  * Answering a question or approving a step is a single request, during which
  * the live feed (api/runs/[runId]/live) drives the stages instead.
  */
-export function AudienceStudio() {
+export function AudienceStudio({ brandLogo = null }: { brandLogo?: string | null }) {
   const [developer, setDeveloper] = useDeveloperMode();
   const [brief, setBrief] = useState("");
   const [mode, setMode] = useState<"demo" | "governed">("demo");
@@ -198,11 +198,21 @@ export function AudienceStudio() {
 
       <header className="sticky top-0 z-20 px-4 pt-4 sm:px-6">
         <nav className="glass mx-auto flex max-w-5xl items-center gap-3 rounded-2xl px-4 py-2.5 sm:px-5">
-          <button onClick={() => reset()} className="flex items-center gap-2 text-label" aria-label="Audience Studio home">
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg btn-accent">
-              <PeopleIcon className="h-4 w-4" />
+          <button onClick={() => reset()} className="flex items-center gap-3 text-label" aria-label="Audience Studio home">
+            {brandLogo ? (
+              // The official logo file (see page.tsx) - a plain img, since its size and format are whatever brand supplies.
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={brandLogo} alt="Comcast Business" className="h-6 w-auto" />
+            ) : (
+              <span className="text-[13px] font-bold uppercase tracking-[0.14em] text-label">Comcast Business</span>
+            )}
+            <span className="h-5 w-px bg-separator" aria-hidden />
+            <span className="flex items-center gap-2">
+              <span className="flex h-6 w-6 items-center justify-center rounded-md btn-accent">
+                <PeopleIcon className="h-3.5 w-3.5" />
+              </span>
+              <span className="hidden text-[15px] font-semibold tracking-tight sm:inline">Audience Studio</span>
             </span>
-            <span className="text-[15px] font-semibold tracking-tight">Audience Studio</span>
           </button>
           {developer && (
             <div className="ml-2 hidden items-center gap-4 text-[13px] text-label-secondary sm:flex">
