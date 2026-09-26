@@ -311,7 +311,7 @@ async function handlePost(req: NextRequest) {
     // PQL synthesis as instructions (drop it / use this field instead).
     const needed = neededAttributes(fields, brief).filter((k) => !(k in filterAnswers));
     const criteria = [brief, fields.audience_description].filter(Boolean).join(" ") || fields.campaign_name || "";
-    const synthCriteria = [criteria, filterAnswerNotes(filterAnswers)].filter(Boolean).join("\n");
+    const decisions = filterAnswerNotes(filterAnswers);
 
     // Reuse Review's probe only when it is conclusive AND covers exactly the
     // attributes this audience needs (Review derives `needed` from the same
@@ -384,7 +384,7 @@ async function handlePost(req: NextRequest) {
         : [];
     let pqlSynthesis: PqlSynthesis | null =
       path.buildPath === "aep_rule_builder" && pqlGuidance
-        ? await synthesizePql(synthCriteria, probe, pqlGuidance, undefined, { catalog })
+        ? await synthesizePql(criteria, probe, pqlGuidance, undefined, { catalog, decisions })
         : null;
 
     // "Already exists" means an existing segment with the IDENTICAL rule -
@@ -407,7 +407,8 @@ async function handlePost(req: NextRequest) {
         body.runId, "audience_creation", pqlSynthesis, audienceName(pqlSynthesis, fields, body.runId, mode), sandbox,
       );
       if (segmentCreation.attempted && !segmentCreation.created && !isMissingWriteTool(segmentCreation.reason) && pqlGuidance) {
-        const retry = await synthesizePql(synthCriteria, probe, pqlGuidance, undefined, {
+        const retry = await synthesizePql(criteria, probe, pqlGuidance, undefined, {
+          decisions,
           catalog,
           feedback: `${segmentCreation.reason} (rejected rule: ${pqlSynthesis.pql})`,
         });

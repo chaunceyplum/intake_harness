@@ -187,6 +187,20 @@ describe("synthesizePql - reflection: one chance to fix an unverified field", ()
     expect(r.attempts).toBe(1);
     expect(r.revised).toBe(false);
   });
+
+  it("puts the marketer's settled conditions in their own overriding section", async () => {
+    let prompt = "";
+    const client: LlmClient = {
+      id: "capture",
+      async complete(req): Promise<LlmCompletionResult> {
+        prompt = JSON.stringify(req);
+        return { text: JSON.stringify({ pql: "xEvent.xfinityInternet = true", fieldsUsed: ["a.xfinityInternet"], missing: [] }), model: "m", usage: null };
+      },
+    };
+    await synthesizePql(criteria, probe(), pqlRef, client, { decisions: "- lifecycle stage: drop it" });
+    expect(prompt).toMatch(/OVERRIDE the criteria/);
+    expect(prompt).toMatch(/lifecycle stage: drop it/);
+  });
 });
 
 describe("isMissingWriteTool - names a disabled write, not a bug here", () => {

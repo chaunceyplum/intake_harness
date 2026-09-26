@@ -62,6 +62,18 @@ describe("estimateSegmentSize - a real count from an evaluation job, never a fab
     expect(result).toMatchObject({ available: false });
     expect((result as { reason: string }).reason).toContain("HTTP 500");
   });
+
+  it("explains an org that only allows scheduled evaluation, without AEP's raw 400", async () => {
+    callMcpTool.mockRejectedValueOnce(
+      new Error("400: Validation failed: Non-scheduled segment jobs are not allowed for orgs enabled for B2B simplification."),
+    );
+    const result = await estimateSegmentSize("audience_creation", "seg-123", "tapdemo");
+    expect(result).toEqual({
+      available: false,
+      reason: expect.stringMatching(/scheduled evaluation/),
+    });
+    expect((result as { reason: string }).reason).not.toContain("400");
+  });
 });
 
 describe("readSegmentSize", () => {

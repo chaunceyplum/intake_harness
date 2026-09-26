@@ -1040,7 +1040,17 @@ export async function estimateSegmentSize(
     );
     jobId = String(job?.id ?? job?.jobId ?? job?.data?.id ?? "");
   } catch (err) {
-    return { available: false, reason: `could not start an evaluation job: ${(err as Error).message}` };
+    const message = (err as Error).message;
+    // Orgs on AEP's "B2B simplification" (tapdemo's org, verified 26 Sep
+    // 2026) refuse on-demand jobs outright: only the scheduled evaluation
+    // counts a segment. Say that plainly rather than surfacing AEP's 400.
+    if (/Non-scheduled segment jobs are not allowed/i.test(message)) {
+      return {
+        available: false,
+        reason: "this AEP org only counts audiences in its scheduled evaluation - size appears after that runs",
+      };
+    }
+    return { available: false, reason: `could not start an evaluation job: ${message}` };
   }
   if (!jobId) return { available: false, reason: "AEP started no evaluation job for this segment" };
 

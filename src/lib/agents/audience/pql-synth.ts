@@ -215,6 +215,14 @@ export async function synthesizePql(
     catalog?: ProfileField[];
     /** Why AEP rejected the previous attempt's rule, so this one can fix it. */
     feedback?: string;
+    /**
+     * The marketer's answers about conditions no field matched (buildability.ts's
+     * filterAnswerNotes). Given their own section that overrides the criteria:
+     * appended to the criteria instead, the model sided with the brief's
+     * wording and refused over the very condition the marketer dropped
+     * (live run 69e0f31c, 26 Sep 2026).
+     */
+    decisions?: string;
   } = {},
 ): Promise<PqlSynthesis> {
   const { client: resolvedClient, configError } = resolveLlmClient(client);
@@ -266,6 +274,14 @@ export async function synthesizePql(
     [
       `Audience criteria: ${criteria.trim()}`,
       "",
+      ...(opts.decisions?.trim()
+        ? [
+            "The marketer has already settled these conditions. Their answers OVERRIDE the criteria above - a " +
+              "dropped condition is not part of this audience, so write the rule without it and do not list it " +
+              `as missing:\n${opts.decisions.trim()}`,
+            "",
+          ]
+        : []),
       "Available profile fields - full PQL path | XDM type | title | description | values. The title and " +
         "description are how the marketer will name a field; the description is the only source for a string " +
         `flag's values. Use ONLY these fields:\n${fieldList}`,

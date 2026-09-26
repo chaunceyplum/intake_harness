@@ -57,16 +57,16 @@ export function readFilterAnswers(fields: Record<string, unknown> | undefined | 
 }
 
 /**
- * The answers as instructions for PQL synthesis, appended to the audience
- * criteria so the model applies them: "drop it" leaves the condition out,
- * a named field is used for it.
+ * The answers as instructions for PQL synthesis (its `decisions` section,
+ * which overrides the brief's criteria): "drop it" leaves the condition
+ * out, a named field is used for it.
  */
 export function filterAnswerNotes(answers: Record<string, string>): string {
   return Object.entries(answers)
     .map(([key, answer]) => {
       const label = FILTER_LABELS[key] ?? key.replace(/_/g, " ");
-      return `The marketer was told no field matches the ${label} condition and answered: "${answer}". ` +
-        "If that means drop it, leave that condition out of the rule; if it names a field, use that field for it.";
+      return `- ${label}: no field in customer data matches it. The marketer answered: "${answer}". ` +
+        "If that means drop it, leave it out entirely; if it names a field, use that field for it.";
     })
     .join("\n");
 }
