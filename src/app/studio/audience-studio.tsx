@@ -245,8 +245,8 @@ export function AudienceStudio() {
             <p className="mb-4 inline-flex items-center gap-1.5 text-[13px] font-semibold text-accent-ink">
               <SparkleIcon className="h-4 w-4" /> Comcast Business audiences, built in Adobe Experience Platform
             </p>
-            <h1 className="text-[40px] font-semibold leading-[1.08] tracking-tight text-label sm:text-[56px]">
-              What <span className="title-gradient">audience</span>
+            <h1 className="text-[40px] font-semibold leading-[1.08] tracking-tight title-gradient sm:text-[56px]">
+              What audience
               <br />
               do you need?
             </h1>
