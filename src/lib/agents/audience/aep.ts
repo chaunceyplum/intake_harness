@@ -159,8 +159,25 @@ export function matchCriteriaFields(criteria: string, fields: ProfileField[]): P
       phrases.add(normalize(run.join("")));
     }
   }
-  return fields.filter((f) => phrases.has(normalize(leafOf(f.path)))).slice(0, 12);
+  // A field whose TITLE's words all appear in the brief is the strongest
+  // match: "email address is not valid" names no path, but every word of
+  // "Valid email address flag" is in it. Without this, 12 loosely matching
+  // `email` leaves filled every hint slot and the model missed validEmailFlag
+  // (plain-English eval, 26 Sep 2026). Two title words minimum, so a bare
+  // "Email" title stays a leaf-level match.
+  const briefWords = new Set(words);
+  const titleWords = (f: ProfileField) =>
+    String(f.title ?? "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w && !TITLE_FILLER.has(w));
+  const titleHit = (f: ProfileField) => {
+    const t = titleWords(f);
+    return t.length >= 2 && t.every((w) => briefWords.has(w));
+  };
+  const hits = fields.filter((f) => titleHit(f) || phrases.has(normalize(leafOf(f.path))));
+  return [...hits.filter(titleHit), ...hits.filter((f) => !titleHit(f))].slice(0, 12);
 }
+
+/** Title words that carry no meaning of their own ("Is CBM member", "Valid email address flag"). */
+const TITLE_FILLER = new Set(["is", "has", "flag", "the", "a", "an", "of", "y", "n"]);
 
 /**
  * Meaningful, distinctive words from a brief/audience description - the

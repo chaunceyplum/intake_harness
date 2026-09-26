@@ -96,3 +96,20 @@ describe("profileCatalog under concurrency", () => {
     }
   });
 });
+
+describe("matchCriteriaFields by title", () => {
+  it("puts a field whose title words are all in the brief ahead of loose leaf matches", () => {
+    const fields = [
+      ...Array.from({ length: 12 }, (_, i) => ({ path: `_t.noise${i}.email`, type: "string" })),
+      { path: "_t.validEmailFlag", type: "string", title: "Valid email address flag", description: "Y/N flag" },
+    ];
+    const hits = matchCriteriaFields("Customers whose email address is not valid", fields);
+    expect(hits[0].path).toBe("_t.validEmailFlag");
+    expect(hits).toHaveLength(12);
+  });
+
+  it("does not match on a one-word title", () => {
+    const hits = matchCriteriaFields("people with a valid address", [{ path: "_t.x", type: "string", title: "Address" }]);
+    expect(hits).toEqual([]);
+  });
+});

@@ -28,11 +28,18 @@ export const BUSINESS_CONTEXT: string[] = [
   "Y/N flags: what the marketer asks for is = \"Y\" (\"has SEP\" -> hasSEP = \"Y\"); its opposite is = \"N\" " +
     "(\"doesn't have SEP\" -> hasSEP = \"N\"; \"email is not valid\" / \"invalid email\" -> validEmailFlag = \"N\"). " +
     "Being eligible for a product is its eligibility flag.",
+  "The product flags (Is CBM member, Is CB Internet Member, Has SEP) ARE the customer status for those products: " +
+    "\"customers of / members of / subscribers to / has X\" is that flag = \"Y\". There is no separate " +
+    "subscription or active-service field to look for.",
   "Only when EXCLUDING people who carry a flag (\"excluding do not contact\", \"not on the do-not-contact list\") " +
     "write != \"Y\" (doNotContact != \"Y\"), so profiles with no value stay in. Never write != \"N\" - it selects " +
     "the opposite of a \"not ...\" request.",
-  "\"Valid email\" / \"emailable\" is validEmailFlag = \"Y\". \"People we can contact / email\" also means " +
-    "doNotContact != \"Y\".",
+  "\"Valid email\" / \"emailable\" / \"people we can email\" is validEmailFlag = \"Y\" - the flag already " +
+    "implies an address, so no separate email field is needed. \"People we can contact / email\" also means " +
+    "doNotContact != \"Y\". Those two flags ARE this business's rule for who may be emailed - do not look for " +
+    "a separate consent or opt-in field.",
+  "\"Allowed to contact\" / \"contactable\" / \"can contact\" is doNotContact != \"Y\" - that flag IS the " +
+    "contact permission; there is no other permission field to find.",
 ];
 
 /** The glossary and context as one prompt section. */

@@ -138,6 +138,11 @@ const SYSTEM = [
   "  EVERY condition you could not express in `missing` - not just the first",
   "  one you notice.",
   "Return ONLY JSON.",
+  "",
+  // The business's vocabulary and data rules (glossary.ts), here rather than
+  // in the user prompt: there, the insufficiency rule above outweighed it and
+  // the model kept hunting for a consent field the glossary says not to need.
+  glossaryPrompt(),
 ].join("\n");
 
 type RawSynth = { pql?: unknown; fieldsUsed?: unknown; missing?: unknown; interpretation?: unknown; name?: unknown };
@@ -277,8 +282,6 @@ export async function synthesizePql(
   const buildPrompt = (extra?: string) =>
     [
       `Audience criteria: ${criteria.trim()}`,
-      "",
-      glossaryPrompt(),
       "",
       ...(opts.decisions?.trim()
         ? [
