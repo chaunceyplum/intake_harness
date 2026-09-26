@@ -21,8 +21,12 @@
   --accent-ink: #00707d;
   --accent-gradient: linear-gradient(135deg, #2ef2d6 0%, #00d2de 45%, #00a8e6 100%);
   --accent-text-gradient: linear-gradient(110deg, #00b3b8 0%, #0096d6 100%);
-  /* Deep enough to read at 4:1+ on the light background end to end. */
-  --title-gradient: linear-gradient(110deg, #007f8a 0%, #00739f 50%, #0a5bb8 100%);
+  /*
+   * Ink to deep ocean - a different hue from the teal glow behind it, so the
+   * title never sinks into it: 6.6:1 or better even over the glow's
+   * strongest point.
+   */
+  --title-gradient: linear-gradient(110deg, #0b1324 0%, #123a55 55%, #0b4f6c 100%);
   --accent-glow: rgba(0, 205, 222, 0.6);
   --on-accent: #032a30;
   --success: #15803d;
@@ -58,7 +62,8 @@
     --accent-ink: #5ff5e6;
     --accent-gradient: linear-gradient(135deg, #6affe6 0%, #1ee6f0 45%, #1fb6ff 100%);
     --accent-text-gradient: linear-gradient(110deg, #5cffe4 0%, #3ab8ff 100%);
-    --title-gradient: linear-gradient(110deg, #6affe6 0%, #3ee6f2 50%, #6cc4ff 100%);
+    /* White to pale aqua - 8:1 or better over the glow. */
+    --title-gradient: linear-gradient(110deg, #ffffff 0%, #d9fbf6 50%, #a8f0ff 100%);
     --accent-glow: rgba(46, 242, 224, 0.5);
     --on-accent: #02191c;
     --success: #16a34a;
