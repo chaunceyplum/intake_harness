@@ -27,7 +27,7 @@
  * unchanged. Pure except for the LLM call itself; verification is deterministic.
  */
 
-import { glossaryPrompt } from "./glossary";
+import { BUSINESS_GLOSSARY, glossaryPrompt } from "./glossary";
 import type { ProfileField, SchemaProbe } from "./aep";
 import type { PqlGuidance } from "@/lib/agents/review/pql-context";
 import { resolveLlmClient, type LlmClient } from "@/lib/llm";
@@ -209,6 +209,88 @@ export function verifyFields(
  * @param pqlGuidance    the PQL reference (only trusted syntax source)
  * @param client         injectable for tests; defaults to the env-configured client
  */
+/** Longest a field description gets in the prompt - Adobe's standard ones run to paragraphs. */
+const DESCRIPTION_CHARS = 100;
+/** Prompt budget for the field list, in characters (~12k tokens). */
+const FIELD_LIST_BUDGET = 45_000;
+/** Words too common in field text to say anything about relevance. */
+const RELEVANCE_STOPWORDS = new Set([
+  "the", "and", "for", "with", "that", "this", "from", "who", "are", "has", "have", "not", "flag", "field",
+  "customers", "customer", "profile", "profiles", "audience", "people", "anyone", "everyone", "whose", "all",
+]);
+
+/** Lower-case word stems: camelCase split, plurals folded ("companies" -> "company", "members" -> "member"). */
+function stems(text: string): string[] {
+  return String(text || "")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w.length >= 3 && !RELEVANCE_STOPWORDS.has(w))
+    .map((w) => (w.endsWith("ies") ? `${w.slice(0, -3)}y` : w.endsWith("s") && !w.endsWith("ss") ? w.slice(0, -1) : w));
+}
+
+/** The brief's stems, plus both forms of every glossary entry it uses ("Security Edge Preferred" also brings "sep"). */
+function criteriaStems(criteria: string): Set<string> {
+  const out = new Set(stems(criteria));
+  const lower = ` ${criteria.toLowerCase().replace(/[^a-z0-9]+/g, " ")} `;
+  for (const g of BUSINESS_GLOSSARY) {
+    const meaning = g.meaning.split(",")[0].toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    if (lower.includes(` ${g.term.toLowerCase()} `) || lower.includes(` ${meaning} `)) {
+      [...stems(g.term), ...stems(meaning), g.term.toLowerCase()].forEach((w) => out.add(w));
+    }
+  }
+  return out;
+}
+
+/**
+ * The field catalog as prompt lines, trimmed to what a rule could plausibly
+ * use. Sending the whole tapdemo catalog verbatim was ~400k characters
+ * (~100k tokens, ~$0.12 on Haiku) per call, and the plain-English eval spent
+ * $10 in an afternoon on it. Now: deprecated fields dropped, descriptions cut
+ * to one line, a title that only repeats the path dropped, and a budget
+ * filled in priority order - fields the brief matched, then fields sharing
+ * words with the brief (by path, title or description, through the business
+ * glossary), then the tenant's own fields, then standard XDM fields.
+ * Verification still checks the model's fields against the FULL catalog.
+ */
+export function offeredFieldList(
+  catalog: ProfileField[],
+  hinted: Set<string>,
+  criteria = "",
+  budget = FIELD_LIST_BUDGET,
+): string {
+  const line = (f: ProfileField) => {
+    const leaf = f.path.split(".").pop() ?? f.path;
+    const title = f.title && f.title.toLowerCase() !== leaf.toLowerCase() ? f.title : "";
+    const description = f.description
+      ? f.description.length > DESCRIPTION_CHARS ? `${f.description.slice(0, DESCRIPTION_CHARS)}...` : f.description
+      : "";
+    return [f.path, f.type, title, description, f.values?.length ? `values: ${f.values.slice(0, 12).join("/")}` : ""]
+      .filter(Boolean)
+      .join(" | ");
+  };
+  const wanted = criteriaStems(criteria);
+  const overlap = (f: ProfileField) =>
+    new Set(stems(`${f.path.split(".").pop()} ${f.title ?? ""} ${f.description ?? ""}`).filter((w) => wanted.has(w))).size;
+  const ranked = catalog
+    .filter((f) => !f.deprecated || hinted.has(f.path))
+    .map((f, i) => {
+      const score = overlap(f);
+      const tier = hinted.has(f.path) ? 0 : score > 0 ? 1 : f.path.startsWith("_") ? 2 : 3;
+      return { f, i, tier, score };
+    })
+    .sort((a, b) => a.tier - b.tier || b.score - a.score || a.i - b.i);
+  const lines: string[] = [];
+  let used = 0;
+  for (const { f, tier } of ranked) {
+    const l = line(f);
+    if (tier > 0 && used + l.length + 1 > budget) break;
+    lines.push(l);
+    used += l.length + 1;
+  }
+  return lines.join("\n");
+}
+
 export async function synthesizePql(
   criteria: string,
   probe: SchemaProbe,
@@ -259,14 +341,7 @@ export async function synthesizePql(
   // Hints: fields the brief named outright (probe.evidence), listed first.
   const hinted = new Set(probe.evidence ?? []);
   const fieldList = catalog
-    ? [...catalog]
-        .sort((a, b) => Number(hinted.has(b.path)) - Number(hinted.has(a.path)))
-        .map((f) =>
-          [f.path, f.type, f.title, f.description, f.values?.length ? `values: ${f.values.slice(0, 12).join("/")}` : ""]
-            .filter(Boolean)
-            .join(" | "),
-        )
-        .join("\n")
+    ? offeredFieldList(catalog, hinted, [criteria, opts.decisions].filter(Boolean).join(" "))
     : presentNames
         .map((n) => {
           const about = [probe.fieldTypes?.[n], probe.fieldDescriptions?.[n]].filter(Boolean).join(" - ");
@@ -291,9 +366,9 @@ export async function synthesizePql(
             "",
           ]
         : []),
-      "Available profile fields - full PQL path | XDM type | title | description | values. The title and " +
-        "description are how the marketer will name a field; the description is the only source for a string " +
-        `flag's values. Use ONLY these fields:\n${fieldList}`,
+      "Available profile fields, one per line - full PQL path | XDM type | then its title, description and " +
+        "allowed values where the schema gives them. The title and description are how the marketer will name " +
+        `a field; the description is the only source for a string flag's values. Use ONLY these fields:\n${fieldList}`,
       "",
       "PQL function reference (use ONLY this syntax):",
       // Bound the reference so a huge doc can't blow the context; the

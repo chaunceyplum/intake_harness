@@ -302,6 +302,8 @@ export type ProfileField = {
   title?: string | null;
   /** Allowed values when the schema enumerates them (`meta:enum` labels, else `enum`). */
   values?: string[] | null;
+  /** The schema marks it `meta:status: deprecated` - left out of PQL synthesis's field list. */
+  deprecated?: boolean;
 };
 
 /**
@@ -347,6 +349,7 @@ function walkFields(schema: unknown, prefix = ""): { fields: ProfileField[]; ref
             description: String(c.description ?? "").trim() || null,
             title: String(c.title ?? "").trim() || null,
             values: labels.length ? labels : null,
+            ...(c["meta:status"] === "deprecated" ? { deprecated: true } : {}),
           });
         }
         const items = c.items && typeof c.items === "object" ? (c.items as Record<string, unknown>) : null;

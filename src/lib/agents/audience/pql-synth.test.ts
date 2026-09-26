@@ -19,6 +19,7 @@ import {
   isMissingWriteTool,
   createSegmentFromPql,
   segmentCreationEnabled,
+  offeredFieldList,
   type PqlSynthesis,
 } from "./pql-synth";
 import type { SchemaProbe } from "./aep";
@@ -301,5 +302,45 @@ describe("isFieldPresent - full-path probe evidence", () => {
     expect(isFieldPresent("_taplondonptrsd.SEPeligible", ["_taplondonptrsd.SEPeligible"])).toBe(true);
     expect(isFieldPresent("SEPeligible", ["_taplondonptrsd.SEPeligible"])).toBe(true);
     expect(isFieldPresent("_taplondonptrsd.eligible", ["_taplondonptrsd.SEPeligible"])).toBe(false);
+  });
+});
+
+describe("offeredFieldList - what the model is shown of the catalog", () => {
+  const catalog = [
+    { path: "person.name.firstName", type: "string", title: "First Name", description: "x".repeat(400) },
+    { path: "_t.oldFlag", type: "string", title: "Old", deprecated: true },
+    { path: "_t.hasSEP", type: "string", title: "Has SEP", description: "Y/N flag" },
+    { path: "workEmail.address", type: "string", title: "Address" },
+  ];
+
+  it("drops deprecated fields and cuts long descriptions to one line", () => {
+    const text = offeredFieldList(catalog, new Set());
+    expect(text).not.toContain("_t.oldFlag");
+    expect(text).toContain(`${"x".repeat(100)}...`);
+    expect(text).not.toContain("x".repeat(101));
+  });
+
+  it("drops a title that only repeats the leaf name", () => {
+    expect(offeredFieldList(catalog, new Set())).toMatch(/^workEmail\.address \| string$/m);
+  });
+
+  it("fills the budget with matched fields, then tenant fields, before standard XDM ones", () => {
+    const text = offeredFieldList(catalog, new Set(["workEmail.address"]), "", 70);
+    const lines = text.split("\n");
+    expect(lines[0]).toMatch(/^workEmail\.address/);
+    expect(lines[1]).toMatch(/^_t\.hasSEP/);
+    expect(text).not.toContain("person.name.firstName");
+  });
+
+  it("ranks fields that share words with the brief - through the glossary and plurals - ahead of the rest", () => {
+    const big = [
+      ...Array.from({ length: 50 }, (_, i) => ({ path: `_t.noise${i}`, type: "string", title: `Noise ${i}` })),
+      { path: "_t.isCBMmember", type: "string", title: "Is CBM member", description: "Y/N flag" },
+      { path: "_t.hasSEP", type: "string", title: "Has SEP", description: "Y/N flag" },
+      { path: "_t.companySize", type: "int", title: "Company Size" },
+    ];
+    const lines = offeredFieldList(big, new Set(), "Companies with 50+ employees who are CBM members without Security Edge Preferred", 200)
+      .split("\n");
+    expect(lines.slice(0, 3).map((l) => l.split(" | ")[0]).sort()).toEqual(["_t.companySize", "_t.hasSEP", "_t.isCBMmember"]);
   });
 });
