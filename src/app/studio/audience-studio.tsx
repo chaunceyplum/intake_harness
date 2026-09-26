@@ -199,7 +199,7 @@ export function AudienceStudio() {
       <header className="sticky top-0 z-20 px-4 pt-4 sm:px-6">
         <nav className="glass mx-auto flex max-w-5xl items-center gap-3 rounded-2xl px-4 py-2.5 sm:px-5">
           <button onClick={() => reset()} className="flex items-center gap-2 text-label" aria-label="Audience Studio home">
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent text-on-accent">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg btn-accent">
               <PeopleIcon className="h-4 w-4" />
             </span>
             <span className="text-[15px] font-semibold tracking-tight">Audience Studio</span>
@@ -242,7 +242,7 @@ export function AudienceStudio() {
       <main className="relative z-10 mx-auto flex w-full max-w-3xl flex-col px-4 pb-24 sm:px-6">
         {!detail ? (
           <section className="rise flex flex-col items-center pt-[12vh] text-center sm:pt-[16vh]">
-            <p className="mb-4 inline-flex items-center gap-1.5 text-[13px] font-medium text-accent">
+            <p className="mb-4 inline-flex items-center gap-1.5 text-[13px] font-semibold text-accent-ink">
               <SparkleIcon className="h-4 w-4" /> Comcast Business audiences, built in Adobe Experience Platform
             </p>
             <h1 className="text-[40px] font-semibold leading-[1.08] tracking-tight text-label sm:text-[56px]">
@@ -276,7 +276,7 @@ export function AudienceStudio() {
                 <button
                   key={s}
                   onClick={() => start(s)}
-                  className="glass rounded-full px-4 py-2 text-left text-[14px] text-label-secondary transition hover:text-label active:scale-[0.98]"
+                  className="rounded-full border border-separator bg-background/40 px-4 py-2 text-left text-[14px] text-label-secondary backdrop-blur-md transition hover:border-accent/50 hover:text-label active:scale-[0.98]"
                 >
                   {s}
                 </button>
@@ -324,7 +324,7 @@ export function AudienceStudio() {
               <div className="rise flex flex-wrap justify-center gap-3 pt-2">
                 <button
                   onClick={() => reset()}
-                  className="rounded-full bg-accent px-6 py-3 text-[15px] font-medium text-on-accent shadow-lg shadow-accent/25 transition hover:bg-accent-hover active:scale-[0.98]"
+                  className="btn-accent rounded-full px-6 py-3 text-[15px]"
                 >
                   New audience
                 </button>
@@ -402,7 +402,7 @@ function Composer({
         type="submit"
         disabled={disabled || !value.trim()}
         aria-label="Build audience"
-        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-accent text-on-accent transition hover:bg-accent-hover active:scale-95 disabled:bg-label-tertiary/30 disabled:text-on-accent/80"
+        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl btn-accent"
       >
         <ArrowUpIcon className="h-5 w-5" />
       </button>
@@ -484,7 +484,7 @@ function WorkingCard({ stage, stuck, onRetry }: { stage: number; stuck: boolean;
       {stuck ? (
         <div className="mt-5 flex items-center justify-between gap-3 border-t border-separator pt-4">
           <p className="text-[14px] text-label-secondary">This is taking longer than usual.</p>
-          <button onClick={onRetry} className="rounded-full bg-accent px-4 py-1.5 text-[14px] font-medium text-on-accent">
+          <button onClick={onRetry} className="btn-accent rounded-full px-4 py-1.5 text-[14px]">
             Try again
           </button>
         </div>
@@ -556,7 +556,7 @@ function QuestionCard({
         <button
           type="submit"
           disabled={!ready || busy}
-          className="rounded-full bg-accent px-5 py-2.5 text-[15px] font-medium text-on-accent transition hover:bg-accent-hover disabled:opacity-40"
+          className="btn-accent rounded-full px-5 py-2.5 text-[15px]"
         >
           Continue
         </button>
@@ -565,7 +565,7 @@ function QuestionCard({
             type="button"
             disabled={busy}
             onClick={() => onSubmit({ [questions[0].key]: "Drop this condition" })}
-            className="rounded-full px-5 py-2.5 text-[15px] font-medium text-accent transition hover:bg-accent/10 disabled:opacity-40"
+            className="rounded-full px-5 py-2.5 text-[15px] font-semibold text-accent-ink transition hover:bg-accent/10 disabled:opacity-40"
           >
             Leave it out
           </button>
@@ -585,7 +585,7 @@ function ApprovalCard({ next, busy, onApprove }: { next: string; busy: boolean; 
       <button
         onClick={onApprove}
         disabled={busy}
-        className="rounded-full bg-accent px-5 py-2.5 text-[15px] font-medium text-on-accent transition hover:bg-accent-hover disabled:opacity-40"
+        className="btn-accent rounded-full px-5 py-2.5 text-[15px]"
       >
         Approve
       </button>
@@ -685,7 +685,7 @@ function SuccessCard({ audience, developer }: { audience: AudienceSummary; devel
             <span className="font-mono text-[14px]">{audience.id}</span>
             <button
               onClick={copyId}
-              className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[12px] font-medium text-accent hover:bg-accent/10"
+              className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[12px] font-semibold text-accent-ink hover:bg-accent/10"
               aria-label="Copy audience ID"
             >
               <CopyIcon className="h-3.5 w-3.5" />

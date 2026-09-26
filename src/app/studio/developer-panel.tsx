@@ -41,7 +41,7 @@ export function DeveloperPanel({
           <>
             <span className="font-mono text-xs text-label-tertiary">{detail.run.run_id}</span>
             <span className="text-xs text-label-tertiary">{detail.run.status}</span>
-            <Link href={`/runs/${detail.run.run_id}`} className="ml-auto text-xs font-medium text-accent hover:underline">
+            <Link href={`/runs/${detail.run.run_id}`} className="ml-auto text-xs font-semibold text-accent-ink hover:underline">
               Open full trace
             </Link>
           </>
@@ -69,7 +69,7 @@ export function DeveloperPanel({
                 </span>
                 <button
                   onClick={() => setOpen((o) => ({ ...o, [tr.task_run_id]: !isOpen }))}
-                  className="ml-auto text-xs font-medium text-accent hover:underline"
+                  className="ml-auto text-xs font-semibold text-accent-ink hover:underline"
                 >
                   {isOpen ? "Hide" : "Details"}
                 </button>

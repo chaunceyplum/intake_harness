@@ -3,8 +3,10 @@
 /*
  * Design tokens. Apple's principles - a small set of semantic colors with a
  * clear hierarchy, one accent, both appearances - but the studio's own
- * palette: cool slate neutrals and a deep teal accent, so it reads as a
- * business tool rather than an Apple app.
+ * palette: cool slate neutrals and a vivid cyan-teal accent, so it reads as
+ * a business tool rather than an Apple app. `--accent` is for fills and
+ * glyphs; text in the accent uses the deeper `--accent-ink` so it stays
+ * readable at small sizes.
  */
 :root {
   --background: #f3f5f8;
@@ -14,8 +16,11 @@
   --label-secondary: rgba(15, 23, 42, 0.68);
   --label-tertiary: rgba(15, 23, 42, 0.44);
   --separator: rgba(15, 23, 42, 0.1);
-  --accent: #0e7490;
-  --accent-hover: #0b5f77;
+  --accent: #0aa5bf;
+  --accent-hover: #0891b2;
+  --accent-ink: #0a7189;
+  --accent-gradient: linear-gradient(135deg, #19c3d6 0%, #0896b4 50%, #0b7390 100%);
+  --accent-glow: rgba(8, 150, 180, 0.45);
   --on-accent: #ffffff;
   --success: #15803d;
   --success-fill: rgba(52, 199, 89, 0.14);
@@ -31,7 +36,7 @@
   --glass-shadow: 0 24px 64px -24px rgba(15, 23, 42, 0.28), 0 2px 8px rgba(15, 23, 42, 0.06);
   --glass-highlight: linear-gradient(180deg, rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0) 42%);
 
-  --ambient-1: rgba(14, 116, 144, 0.2);
+  --ambient-1: rgba(6, 182, 212, 0.24);
   --ambient-2: rgba(67, 56, 202, 0.12);
   --ambient-3: rgba(20, 184, 166, 0.14);
 }
@@ -45,9 +50,12 @@
     --label-secondary: rgba(226, 232, 240, 0.7);
     --label-tertiary: rgba(226, 232, 240, 0.42);
     --separator: rgba(148, 163, 184, 0.18);
-    --accent: #2cc4dc;
-    --accent-hover: #5dd6e8;
-    --on-accent: #04161b;
+    --accent: #22d3ee;
+    --accent-hover: #67e8f9;
+    --accent-ink: #5fe0f0;
+    --accent-gradient: linear-gradient(135deg, #6ff0de 0%, #22d3ee 50%, #06b6d4 100%);
+    --accent-glow: rgba(34, 211, 238, 0.4);
+    --on-accent: #03161a;
     --success: #16a34a;
     --success-fill: rgba(48, 209, 88, 0.16);
     --warning: #ff9f0a;
@@ -61,7 +69,7 @@
     --glass-shadow: 0 24px 64px -24px rgba(0, 0, 0, 0.7), 0 2px 8px rgba(0, 0, 0, 0.4);
     --glass-highlight: linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0) 40%);
 
-    --ambient-1: rgba(44, 196, 220, 0.2);
+    --ambient-1: rgba(34, 211, 238, 0.22);
     --ambient-2: rgba(79, 70, 229, 0.2);
     --ambient-3: rgba(20, 184, 166, 0.12);
   }
@@ -77,12 +85,13 @@
   --color-accent: var(--accent);
   --color-accent-hover: var(--accent-hover);
   --color-on-accent: var(--on-accent);
+  --color-accent-ink: var(--accent-ink);
   --color-success: var(--success);
   --color-success-fill: var(--success-fill);
   --color-warning: var(--warning);
   --color-warning-fill: var(--warning-fill);
   --color-danger: var(--danger);
-  --font-sans: var(--font-jakarta), "Helvetica Neue", Arial, sans-serif;
+  --font-sans: var(--font-manrope), "Helvetica Neue", Arial, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, Menlo, monospace;
 }
 
@@ -90,6 +99,7 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans);
+  font-feature-settings: "ss01", "cv11";
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
@@ -162,6 +172,34 @@ body {
 }
 .glass-strong {
   background: var(--glass-fill-strong);
+}
+
+/* Headlines set a touch tight - Manrope's large sizes want it. */
+h1,
+h2 {
+  letter-spacing: -0.025em;
+}
+
+/* The primary action: the accent as a lit gradient, so the one thing to press stands out. */
+.btn-accent {
+  background: var(--accent-gradient);
+  color: var(--on-accent);
+  font-weight: 600;
+  box-shadow: 0 10px 28px -10px var(--accent-glow), inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  transition: filter 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+}
+.btn-accent:hover {
+  filter: brightness(1.07) saturate(1.05);
+}
+.btn-accent:active {
+  transform: scale(0.98);
+}
+.btn-accent:disabled {
+  background: var(--separator);
+  color: var(--label-tertiary);
+  box-shadow: none;
+  filter: none;
+  transform: none;
 }
 
 /* Entrances: a short rise and fade, so each new state arrives, not appears. */
