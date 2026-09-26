@@ -1,26 +1,218 @@
 @import "tailwindcss";
 
+/*
+ * Design tokens. Colors follow Apple's system palette (label, secondary
+ * label, systemBlue, systemGreen...) in both appearances, so the studio
+ * reads as native on Apple hardware and calm everywhere else.
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f5f5f7;
+  --foreground: #1d1d1f;
+
+  --label: #1d1d1f;
+  --label-secondary: rgba(60, 60, 67, 0.72);
+  --label-tertiary: rgba(60, 60, 67, 0.45);
+  --separator: rgba(60, 60, 67, 0.14);
+  --accent: #0071e3;
+  --accent-hover: #0077ed;
+  --success: #248a3d;
+  --success-fill: rgba(52, 199, 89, 0.14);
+  --warning: #b25000;
+  --warning-fill: rgba(255, 149, 0, 0.14);
+  --danger: #d70015;
+
+  /* Liquid Glass: a translucent fill, a bright edge, and depth from shadow. */
+  --glass-fill: rgba(255, 255, 255, 0.62);
+  --glass-fill-strong: rgba(255, 255, 255, 0.8);
+  --glass-edge: rgba(255, 255, 255, 0.85);
+  --glass-stroke: rgba(0, 0, 0, 0.06);
+  --glass-shadow: 0 24px 64px -24px rgba(15, 23, 42, 0.28), 0 2px 8px rgba(15, 23, 42, 0.06);
+  --glass-highlight: linear-gradient(180deg, rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0) 42%);
+
+  --ambient-1: rgba(0, 113, 227, 0.2);
+  --ambient-2: rgba(94, 92, 230, 0.16);
+  --ambient-3: rgba(48, 176, 199, 0.16);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #000000;
+    --foreground: #f5f5f7;
+
+    --label: #f5f5f7;
+    --label-secondary: rgba(235, 235, 245, 0.68);
+    --label-tertiary: rgba(235, 235, 245, 0.4);
+    --separator: rgba(84, 84, 88, 0.55);
+    --accent: #0a84ff;
+    --accent-hover: #409cff;
+    --success: #30d158;
+    --success-fill: rgba(48, 209, 88, 0.16);
+    --warning: #ff9f0a;
+    --warning-fill: rgba(255, 159, 10, 0.16);
+    --danger: #ff453a;
+
+    --glass-fill: rgba(44, 44, 46, 0.5);
+    --glass-fill-strong: rgba(44, 44, 46, 0.72);
+    --glass-edge: rgba(255, 255, 255, 0.16);
+    --glass-stroke: rgba(255, 255, 255, 0.08);
+    --glass-shadow: 0 24px 64px -24px rgba(0, 0, 0, 0.7), 0 2px 8px rgba(0, 0, 0, 0.4);
+    --glass-highlight: linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0) 40%);
+
+    --ambient-1: rgba(10, 132, 255, 0.28);
+    --ambient-2: rgba(94, 92, 230, 0.24);
+    --ambient-3: rgba(100, 210, 255, 0.14);
+  }
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-label: var(--label);
+  --color-label-secondary: var(--label-secondary);
+  --color-label-tertiary: var(--label-tertiary);
+  --color-separator: var(--separator);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-success: var(--success);
+  --color-success-fill: var(--success-fill);
+  --color-warning: var(--warning);
+  --color-warning-fill: var(--warning-fill);
+  --color-danger: var(--danger);
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", var(--font-inter), "Helvetica Neue",
+    Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", var(--font-geist-mono), Menlo, monospace;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* The workbench keeps its original flat look. */
+.workbench {
+  background: var(--background);
+}
+
+/* ---- Studio ------------------------------------------------------------ */
+
+/* A soft, slowly drifting light behind the glass - depth without noise. */
+.ambient {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.ambient::before,
+.ambient::after {
+  content: "";
+  position: absolute;
+  width: 70vmax;
+  height: 70vmax;
+  border-radius: 50%;
+  filter: blur(80px);
+  animation: drift 28s ease-in-out infinite alternate;
+}
+.ambient::before {
+  top: -30vmax;
+  left: -20vmax;
+  background: radial-gradient(circle, var(--ambient-1), transparent 65%);
+}
+.ambient::after {
+  bottom: -35vmax;
+  right: -25vmax;
+  background: radial-gradient(circle, var(--ambient-2), transparent 65%),
+    radial-gradient(circle at 30% 30%, var(--ambient-3), transparent 60%);
+  animation-delay: -14s;
+}
+@keyframes drift {
+  from {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    transform: translate3d(6vmax, 4vmax, 0) scale(1.08);
+  }
+}
+
+.glass {
+  position: relative;
+  background: var(--glass-fill);
+  -webkit-backdrop-filter: blur(40px) saturate(180%);
+  backdrop-filter: blur(40px) saturate(180%);
+  border: 1px solid var(--glass-stroke);
+  box-shadow: var(--glass-shadow), inset 0 1px 0 var(--glass-edge);
+}
+/* The specular sheen along the top edge that makes glass read as glass. */
+.glass::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--glass-highlight);
+  pointer-events: none;
+}
+.glass > * {
+  position: relative;
+}
+.glass-strong {
+  background: var(--glass-fill-strong);
+}
+
+/* Entrances: a short rise and fade, so each new state arrives, not appears. */
+.rise {
+  animation: rise 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.check-draw {
+  stroke-dasharray: 30;
+  stroke-dashoffset: 30;
+  animation: check-draw 0.5s 0.2s cubic-bezier(0.65, 0, 0.35, 1) forwards;
+}
+@keyframes check-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* HIG: honor Reduce Motion and Reduce Transparency. */
+@media (prefers-reduced-motion: reduce) {
+  .ambient::before,
+  .ambient::after,
+  .rise,
+  .spin {
+    animation: none;
+  }
+  .check-draw {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .glass {
+    background: var(--background);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
 }

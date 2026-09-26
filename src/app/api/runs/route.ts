@@ -1,5 +1,5 @@
-import { NextRequest, NextResponse } from "next/server";
-import { runPipeline, listRuns } from "@/lib/pipeline/orchestrator";
+import { NextRequest, NextResponse, after } from "next/server";
+import { runPipeline, startPipeline, listRuns } from "@/lib/pipeline/orchestrator";
 import { apiError } from "@/lib/api-error";
 
 /**
@@ -13,6 +13,11 @@ import { apiError } from "@/lib/api-error";
  * immediately and let GET /api/runs/[runId] be the source of truth. The
  * synchronous version here is enough while every agent is a fast stub.
  *
+ * `{ "input": ..., "async": true }` is that fire-and-poll form: it answers
+ * with the new run as soon as it exists and finishes the pipeline after the
+ * response. The home page uses it to show each agent's progress as it
+ * happens.
+ *
  * GET: lists the most recent runs — the "what has run" observability view.
  */
 export async function POST(req: NextRequest) {
@@ -23,6 +28,13 @@ export async function POST(req: NextRequest) {
 
   const baseUrl = req.nextUrl.origin;
   try {
+    if ((body as { async?: unknown }).async === true) {
+      const { run, done } = await startPipeline(body.input, baseUrl);
+      // Failures are recorded on the run itself; this only keeps an
+      // unexpected throw from becoming an unhandled rejection.
+      after(() => done.catch((err) => console.error(`run ${run.run_id} failed after response:`, err)));
+      return NextResponse.json({ run }, { status: 202 });
+    }
     const run = await runPipeline(body.input, baseUrl);
     return NextResponse.json({ run });
   } catch (err) {

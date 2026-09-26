@@ -53,7 +53,7 @@ function engineLine(metadata?: SchemaProbeMetadata): { engine: "llm" | "determin
  * The tool calls one agent step made, terminal-style: the call (→) and its
  * outcome (←) on their own lines, so a scan tells call from result without
  * reading prose or opening the raw JSON dump. Shared between the live chat
- * trace (pipeline-chat.tsx, a run in progress) and the Runs page
+ * trace (studio/audience-studio.tsx, a run in progress) and the Runs page
  * (runs-browser.tsx, browsing history) so the same step reads the same way
  * whether you're watching it happen or looking at it afterward.
  */

@@ -234,17 +234,28 @@ export async function retryRun(runId: string, baseUrl: string): Promise<RunRow> 
 
 /** Starts a run and executes only its first agent (Intake). */
 export async function runPipeline(initialInput: unknown, baseUrl: string): Promise<RunRow> {
+  return (await startPipeline(initialInput, baseUrl)).done;
+}
+
+/**
+ * runPipeline in two halves: the new run row as soon as it exists, and the
+ * pipeline itself as a promise. POST /api/runs with `async: true` answers
+ * with the row and lets the pipeline finish after the response (Next's
+ * `after`), so the page can poll GET /api/runs/[runId] and show real
+ * progress per agent instead of waiting on one long request.
+ */
+export async function startPipeline(
+  initialInput: unknown,
+  baseUrl: string,
+): Promise<{ run: RunRow; done: Promise<RunRow> }> {
   const [run] = await query<RunRow>(
     `INSERT INTO runs (input) VALUES ($1::jsonb) RETURNING *`,
     [JSON.stringify(initialInput)],
   );
 
   liveProgress.resetRun(run.run_id);
-  try {
-    return await advanceOneStep(run, 0, initialInput, {}, baseUrl);
-  } finally {
-    liveProgress.clearRun(run.run_id);
-  }
+  const done = advanceOneStep(run, 0, initialInput, {}, baseUrl).finally(() => liveProgress.clearRun(run.run_id));
+  return { run, done };
 }
 
 /**

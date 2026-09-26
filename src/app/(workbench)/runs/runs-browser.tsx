@@ -3,15 +3,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { RunRow, TaskRunRow } from "@/lib/pipeline/types";
 import { PIPELINE } from "@/lib/pipeline/registry";
-import { StatusBadge } from "../status-badge";
-import { ToolCallTrace, type ToolCallOutput } from "../tool-call-trace";
-import { ToolCallLog, type ToolCallLogEntry } from "../tool-call-log";
-import { LiveToolCallLog, type LiveToolCall } from "../live-tool-call-log";
-import { AudienceCard, DemoPill } from "../audience-card";
+import { StatusBadge } from "@/app/status-badge";
+import { ToolCallTrace, type ToolCallOutput } from "@/app/tool-call-trace";
+import { ToolCallLog, type ToolCallLogEntry } from "@/app/tool-call-log";
+import { LiveToolCallLog, type LiveToolCall } from "@/app/live-tool-call-log";
+import { AudienceCard, DemoPill } from "@/app/audience-card";
 
 type RunDetail = { run: RunRow; taskRuns: TaskRunRow[] };
 
-/** Demo runs (input.mode "demo") build in tapdemo and file nothing in Workfront - see pipeline-chat.tsx's toggle. */
+/** Demo runs (input.mode "demo") build in tapdemo and file nothing in Workfront - see studio/audience-studio.tsx's mode switch. */
 function isDemo(run: RunRow): boolean {
   return (run.input as { mode?: unknown } | null)?.mode === "demo";
 }
@@ -172,16 +172,15 @@ export function RunsBrowser({ initialRunId }: { initialRunId?: string }) {
 
   /*
    * Poll GET /api/runs/[runId]/live while resuming/approving/retrying THIS
-   * run is in flight - see pipeline-chat.tsx's identical effect and
-   * live-tool-call-log.tsx / live-progress.ts for why. `runningAgain`
-   * (Run again) is deliberately NOT included: it starts a brand-new run
-   * with its own run_id, which this page doesn't learn until that whole
-   * request returns - same limitation pipeline-chat.tsx's startRun has, for
-   * the same reason.
+   * run is in flight - see live-tool-call-log.tsx / live-progress.ts for
+   * why. `runningAgain` (Run again) is deliberately NOT included: it starts
+   * a brand-new run with its own run_id, which this page doesn't learn until
+   * that whole request returns (the studio avoids this by starting runs with
+   * `async: true` - see api/runs/route.ts).
    */
   useEffect(() => {
     // No synchronous setState on the "nothing in flight" branch, on
-    // purpose - see pipeline-chat.tsx's identical effect for why (rendering
+    // purpose (rendering
     // below is already gated on anyActionInFlight, and the first poll() of
     // a new action resolves near-instantly against a store orchestrator.ts
     // already reset fresh).
