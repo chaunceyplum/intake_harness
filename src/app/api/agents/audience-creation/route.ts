@@ -288,6 +288,7 @@ async function handlePost(req: NextRequest) {
   // `...input` spread) - every other value, including absent, is "governed",
   // today's unchanged default. See this file's docstring.
   const mode: "demo" | "governed" = input.mode === "demo" ? "demo" : "governed";
+  const draftOnly = input.draftOnly === true;
   // Intake's settled filters, threaded through Review's `...input` spread.
   const filterAnswers: Record<string, string> =
     input.filterAnswers && typeof input.filterAnswers === "object" ? (input.filterAnswers as Record<string, string>) : {};
@@ -349,7 +350,13 @@ async function handlePost(req: NextRequest) {
       ? missing.length === 0
       : "undetermined";
 
-    const path = decideBuildPath(fields, probe);
+    // Only a STATED customer type can send the audience off the profile
+    // store: the extractor guessed "Prospect" from "companies with 100+
+    // employees" and routed existing customers to FAC (eval, 26 Sep 2026).
+    const path = decideBuildPath(
+      inferredFieldKeys.has("customer_type") ? { ...fields, customer_type: "" } : fields,
+      probe,
+    );
     const gap = identityGap(fields);
     const cutoff = nightlyCutoff();
 
@@ -399,7 +406,10 @@ async function handlePost(req: NextRequest) {
     // If AEP rejects the rule itself, the model gets AEP's own error and one
     // chance to correct the rule - a wrong operator or array syntax is the
     // usual cause, and AEP's message names it.
-    const creationOn = segmentCreationEnabled(mode);
+    // `draftOnly` (threaded from Intake): write and verify the rule but create
+    // nothing - for previewing, and for testing many briefs without leaving
+    // a segment behind for each one.
+    const creationOn = segmentCreationEnabled(mode) && !draftOnly;
     let segmentCreation: SegmentCreation | null = null;
     let repairedAfterRejection = false;
     if (pqlSynthesis?.synthesized && !sameRule && creationOn) {
@@ -513,7 +523,9 @@ async function handlePost(req: NextRequest) {
           ? segmentCreation?.attempted
             ? `Wrote the rule ${pqlSynthesis.pql}, but AEP did not create the audience: ${segmentCreation.created ? "" : segmentCreation.reason}`
             : `Wrote the rule ${pqlSynthesis.pql} (fields verified present: ${pqlSynthesis.fieldsUsed.join(", ")}). Not created - ` +
-              "audience creation is off in Governed mode (set AUDIENCE_CREATE_SEGMENT=true, or use Demo mode)."
+              (draftOnly
+                ? "this was a draft-only run."
+                : "audience creation is off in Governed mode (set AUDIENCE_CREATE_SEGMENT=true, or use Demo mode).")
           : pqlSynthesis
             ? `Could not write a rule for this audience: ${pqlSynthesis.reason}.`
             : "",

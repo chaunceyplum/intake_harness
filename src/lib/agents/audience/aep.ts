@@ -634,6 +634,14 @@ const DATA_TYPE_DEPTH = 2;
 /** A built catalog per sandbox, reused across agents and runs for a few minutes. */
 const CATALOG_CACHE_MS = 5 * 60_000;
 const catalogCache = new Map<string, { at: number; fields: ProfileField[]; groupsOpened: number }>();
+type BuiltCatalog = { fields: ProfileField[]; groupsOpened: number; error: string | null };
+/**
+ * Builds in progress, so concurrent runs share one. Without this, N runs
+ * arriving on a cold cache each opened ~100 field groups at once; four did
+ * that on 26 Sep 2026 and the gateway answered with 503s and then dropped
+ * its AEP tools entirely.
+ */
+const catalogInflight = new Map<string, Promise<BuiltCatalog>>();
 
 async function fetchAll(
   taskId: TaskId,
@@ -676,7 +684,7 @@ async function buildCatalog(
   taskId: TaskId,
   union: unknown,
   sandboxOverride?: string,
-): Promise<{ fields: ProfileField[]; groupsOpened: number; error: string | null }> {
+): Promise<BuiltCatalog> {
   const groupIds = fieldGroupRefs(union, true).slice(0, UNION_FIELD_GROUP_CAP);
   if (!groupIds.length) return { fields: [], groupsOpened: 0, error: null };
 
@@ -686,6 +694,21 @@ async function buildCatalog(
     return { fields: cached.fields, groupsOpened: cached.groupsOpened, error: null };
   }
 
+  const inflight = catalogInflight.get(cacheKey);
+  if (inflight) return inflight;
+  const build = buildCatalogUncached(taskId, groupIds, cacheKey, sandboxOverride).finally(() =>
+    catalogInflight.delete(cacheKey),
+  );
+  catalogInflight.set(cacheKey, build);
+  return build;
+}
+
+async function buildCatalogUncached(
+  taskId: TaskId,
+  groupIds: string[],
+  cacheKey: string,
+  sandboxOverride?: string,
+): Promise<BuiltCatalog> {
   const groups = await fetchAll(taskId, "adobe_get_field_group", groupIds, sandboxOverride);
   const out = new Map<string, ProfileField>();
   let pending: Array<{ path: string; ref: string }> = [];

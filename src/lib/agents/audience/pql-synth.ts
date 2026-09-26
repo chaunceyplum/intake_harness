@@ -27,6 +27,7 @@
  * unchanged. Pure except for the LLM call itself; verification is deterministic.
  */
 
+import { glossaryPrompt } from "./glossary";
 import type { ProfileField, SchemaProbe } from "./aep";
 import type { PqlGuidance } from "@/lib/agents/review/pql-context";
 import { resolveLlmClient, type LlmClient } from "@/lib/llm";
@@ -114,7 +115,10 @@ const SYSTEM = [
   "- The marketer writes in business language, not field names. Match their words",
   "  to fields by TITLE and DESCRIPTION as well as path: \"customers who have CBM\"",
   "  means a field titled \"Is CBM member\"; \"SEP eligible\" means one titled",
-  "  \"SEP eligible\". Prefer the tenant's own fields (_tenant.*) when they fit.",
+  "  \"SEP eligible\". Prefer the tenant's own fields (_tenant.*) over standard XDM",
+  "  fields whenever both fit - a tenant \"Email address\" over personalEmail.address.",
+  "- Use the business glossary given with the criteria: an abbreviation in a field",
+  "  title and its spelled-out form in the criteria are the same thing.",
   "- Compare to the values the field actually holds: a string described as a",
   "  \"Y/N flag\" is = \"Y\", a boolean is = true, an enum uses one of its listed",
   "  values. \"Has an email\" means the email field exists (X.isNotNull()).",
@@ -273,6 +277,8 @@ export async function synthesizePql(
   const buildPrompt = (extra?: string) =>
     [
       `Audience criteria: ${criteria.trim()}`,
+      "",
+      glossaryPrompt(),
       "",
       ...(opts.decisions?.trim()
         ? [

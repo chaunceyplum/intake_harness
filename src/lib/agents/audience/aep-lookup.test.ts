@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const { callMcpToolMock } = vi.hoisted(() => ({ callMcpToolMock: vi.fn() }));
 vi.mock("@/lib/mcp-client", () => ({ callMcpTool: callMcpToolMock }));
 
-const { fieldEntries, matchCriteriaFields, neededAttributes, probeSchemas } = await import("./aep");
+const { fieldEntries, matchCriteriaFields, neededAttributes, probeSchemas, profileCatalog } = await import("./aep");
 
 // The shape tapdemo actually returns: a union of bare $refs, no inline properties.
 const UNION = {
@@ -79,5 +79,20 @@ describe("probeSchemas against a $ref-only union view", () => {
     expect(probe.fieldDescriptions?.["_taplondonptrsd.SEPeligible"]).toBe("Y/N flag");
     const groupCalls = callMcpToolMock.mock.calls.filter((c) => c[1] === "adobe_get_field_group");
     expect(groupCalls.every((c) => c[2].sandbox === "tapdemo")).toBe(true);
+  });
+});
+
+describe("profileCatalog under concurrency", () => {
+  it("shares one build between concurrent callers instead of opening every field group per caller", async () => {
+    // A sandbox no other test uses, so the catalog cache starts cold.
+    const results = await Promise.all(
+      [1, 2, 3, 4].map(() => profileCatalog("audience_creation", "sbx-concurrent")),
+    );
+    const groupCalls = callMcpToolMock.mock.calls.filter((c) => c[1] === "adobe_get_field_group");
+    // Two tenant groups in UNION (the xdm/context/profile class is skipped) - once each, not 4x.
+    expect(groupCalls).toHaveLength(2);
+    for (const fields of results) {
+      expect(fields.map((f) => f.path)).toContain("_taplondonptrsd.SEPeligible");
+    }
   });
 });

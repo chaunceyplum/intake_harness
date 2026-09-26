@@ -37,6 +37,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ run
     fields?: Record<string, unknown>;
     questions?: { key: string; label: string }[];
     mode?: string;
+    draftOnly?: boolean;
   };
   const typedAnswers = body.answers as Record<string, unknown>;
 
@@ -85,6 +86,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ run
     loopCount: pausedOutput.loopCount,
     fields: mergedFields,
     ...(pausedOutput.mode === "demo" ? { mode: "demo" } : {}),
+    ...(pausedOutput.draftOnly === true ? { draftOnly: true } : {}),
   };
 
   const baseUrl = req.nextUrl.origin;

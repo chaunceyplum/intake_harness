@@ -200,6 +200,8 @@ describe("synthesizePql - reflection: one chance to fix an unverified field", ()
     await synthesizePql(criteria, probe(), pqlRef, client, { decisions: "- lifecycle stage: drop it" });
     expect(prompt).toMatch(/OVERRIDE the criteria/);
     expect(prompt).toMatch(/lifecycle stage: drop it/);
+    // The business glossary rides along on every prompt.
+    expect(prompt).toMatch(/SEP = Security Edge Preferred/);
   });
 });
 

@@ -146,6 +146,7 @@ async function handlePost(req: NextRequest) {
     loopCount?: number;
     fields?: Record<string, unknown>;
     mode?: string;
+    draftOnly?: boolean;
   }>;
 
   const brief = String(body.input?.brief || "").trim();
@@ -252,6 +253,7 @@ async function handlePost(req: NextRequest) {
           // whole form.
           loopCount: loopCount + 1,
           mode,
+          ...(body.input?.draftOnly === true ? { draftOnly: true } : {}),
           questions: [{ key: unmappable.key, label: unmappable.label, ask: unmappable.ask, options: null, optionsPartial: false }],
           grounding,
         },
@@ -297,6 +299,8 @@ async function handlePost(req: NextRequest) {
         ...summarise(parsed),
         loopCount,
         mode,
+        // Draft-only runs: Agent 3 writes the rule but creates no segment.
+        ...(body.input?.draftOnly === true ? { draftOnly: true } : {}),
         // Carried through Review's `...input` spread to Agent 3, which drops
         // or remaps these conditions when it writes the rule.
         filterAnswers,
