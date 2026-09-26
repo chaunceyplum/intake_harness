@@ -243,7 +243,7 @@ describe("createSegmentFromPql - writes only from a verified expression, honest 
     expect(callMcpTool).toHaveBeenCalledWith(
       "audience_creation",
       "adobe_create_segment",
-      expect.objectContaining({ name: "Fall Save", expression: expect.objectContaining({ value: verified.pql }) }),
+      expect.objectContaining({ name: "Fall Save", pql_expression: verified.pql }),
     );
   });
 

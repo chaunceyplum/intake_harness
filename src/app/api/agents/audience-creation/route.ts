@@ -10,6 +10,8 @@ import {
   neededAttributes,
   criteriaKeywords,
   estimateSegmentSize,
+  findSegmentWithRule,
+  profileCatalog,
   type SegmentSizeEstimate,
 } from "@/lib/agents/audience/aep";
 import { resolveActivationIntent, activateAudience, type ActivationOutcome } from "@/lib/agents/audience/activation";
@@ -18,6 +20,8 @@ import {
   synthesizePql,
   createSegmentFromPql,
   segmentCreationEnabled,
+  isMissingWriteTool,
+  type PqlSynthesis,
   type SegmentCreation,
 } from "@/lib/agents/audience/pql-synth";
 import type { AepContext } from "@/lib/agents/review/aep-context";
@@ -129,6 +133,29 @@ export interface AudienceCreationOutput {
    * never a fabricated zero. See aep.ts's estimateSegmentSize.
    */
   sizeEstimate: SegmentSizeEstimate;
+  /**
+   * The audience that now exists in AEP for this request - created this run,
+   * or an existing segment with the IDENTICAL rule - with the rule and what
+   * it means in plain English. Null when none exists (no rule could be
+   * written, creation is off, or AEP refused it).
+   */
+  audience: {
+    segmentId: string;
+    name: string;
+    source: "created" | "existing_same_rule";
+    pql: string;
+    interpretation: string | null;
+    sandbox: string | null;
+  } | null;
+}
+
+/** "Demo: SEP-eligible profiles with email · 4f2a91c0" - readable in AEP, unique per run so a re-run never collides on name. */
+function audienceName(synthesis: PqlSynthesis, fields: Record<string, string>, runId: string, mode: "demo" | "governed"): string {
+  const base =
+    synthesis.suggestedName ||
+    [fields.campaign_name, fields.audience_description].filter(Boolean).map(String).join(" — ") ||
+    "Audience";
+  return `${mode === "demo" ? "Demo: " : ""}${base.slice(0, 80)} · ${String(runId || "").slice(0, 8)}`;
 }
 
 /** The one statusMessage line for whatever activateAudience decided - only ever called when activation was actually requested. */
@@ -336,64 +363,88 @@ async function handlePost(req: NextRequest) {
           : await groundPqlGuidance("audience_creation", criteria)
         : null;
 
-    // Synthesize a candidate PQL expression from the criteria, the CONCLUSIVELY
-    // present schema fields, and the PQL reference - but only on the rule-builder
-    // path, and only when a conclusive probe gives a real field set to verify
-    // against. Every field the model uses is checked present before the
-    // expression is trusted (see pql-synth.ts); an unverifiable reference gets
-    // the whole expression rejected. This is DRAFT-ONLY: the expression is
-    // attached for a human to build from, never auto-created (same read-only
-    // stance as the rest of this agent). No LLM / inconclusive probe / failure
-    // -> no expression, and Agent 3 behaves exactly as before.
-    const pqlSynthesis =
+    // Write the rule. The model reads the sandbox's WHOLE field catalog -
+    // path, title, description, allowed values - because a plain-English
+    // request names fields the way people do ("customers who have CBM" ->
+    // `_taplondonptrsd.isCBMmember`, titled "Is CBM member"), not by path.
+    // Every field it uses is still verified against that catalog before the
+    // rule is trusted (pql-synth.ts). The probe's name matches ride along
+    // as hints. No catalog (unreadable) -> the probe's evidence, as before.
+    const catalog =
+      path.buildPath === "aep_rule_builder" && pqlGuidance && probe.conclusive
+        ? await profileCatalog("audience_creation", sandbox)
+        : [];
+    let pqlSynthesis: PqlSynthesis | null =
       path.buildPath === "aep_rule_builder" && pqlGuidance
-        ? await synthesizePql(criteria, probe, pqlGuidance)
+        ? await synthesizePql(criteria, probe, pqlGuidance, undefined, { catalog })
         : null;
 
-    // Actually create the segment - ONLY when explicitly enabled
-    // (AUDIENCE_CREATE_SEGMENT=true, off by default like activation) AND the
-    // expression passed the verify gate. Otherwise the expression stays a
-    // draft. createSegmentFromPql follows the same honesty contract as Agent
-    // 1's Workfront create: it reports what it WOULD have created when the
-    // write tool is disabled, rather than a silent no-op. Never throws.
-    const segmentCreation: SegmentCreation | null =
-      pqlSynthesis?.synthesized && segmentCreationEnabled()
-        ? await createSegmentFromPql(
-            body.runId,
-            "audience_creation",
-            pqlSynthesis,
-            [fields.campaign_name, fields.audience_description].filter(Boolean).map(String).join(" — ") ||
-              "Audience (drafted by Agent 3)",
-            sandbox,
-          )
+    // "Already exists" means an existing segment with the IDENTICAL rule -
+    // never one whose name merely shares a word (see findSegmentWithRule).
+    const sameRule =
+      pqlSynthesis?.synthesized && pqlSynthesis.pql
+        ? await findSegmentWithRule("audience_creation", pqlSynthesis.pql, sandbox)
         : null;
 
-    // Cheapest good outcome first: an audience that already exists needs no build
-    // and is the only way to get a real count without writing anything.
+    // Create it. Demo mode always does (that is what Demo is for, in the
+    // tapdemo sandbox); Governed mode only with AUDIENCE_CREATE_SEGMENT=true.
+    // If AEP rejects the rule itself, the model gets AEP's own error and one
+    // chance to correct the rule - a wrong operator or array syntax is the
+    // usual cause, and AEP's message names it.
+    const creationOn = segmentCreationEnabled(mode);
+    let segmentCreation: SegmentCreation | null = null;
+    let repairedAfterRejection = false;
+    if (pqlSynthesis?.synthesized && !sameRule && creationOn) {
+      segmentCreation = await createSegmentFromPql(
+        body.runId, "audience_creation", pqlSynthesis, audienceName(pqlSynthesis, fields, body.runId, mode), sandbox,
+      );
+      if (segmentCreation.attempted && !segmentCreation.created && !isMissingWriteTool(segmentCreation.reason) && pqlGuidance) {
+        const retry = await synthesizePql(criteria, probe, pqlGuidance, undefined, {
+          catalog,
+          feedback: `${segmentCreation.reason} (rejected rule: ${pqlSynthesis.pql})`,
+        });
+        if (retry.synthesized && retry.pql && retry.pql !== pqlSynthesis.pql) {
+          repairedAfterRejection = true;
+          pqlSynthesis = retry;
+          segmentCreation = await createSegmentFromPql(
+            body.runId, "audience_creation", retry, audienceName(retry, fields, body.runId, mode), sandbox,
+          );
+        }
+      }
+    }
+
+    const created = segmentCreation?.attempted && segmentCreation.created ? segmentCreation : null;
+    const audience: AudienceCreationOutput["audience"] =
+      created && pqlSynthesis
+        ? {
+            segmentId: created.segmentId, name: created.name, source: "created", pql: created.pql,
+            interpretation: pqlSynthesis.interpretation ?? null, sandbox: sandbox ?? probe.sandbox,
+          }
+        : sameRule && pqlSynthesis?.pql
+          ? {
+              segmentId: sameRule.id, name: sameRule.name, source: "existing_same_rule", pql: pqlSynthesis.pql,
+              interpretation: pqlSynthesis.interpretation ?? null, sandbox: sandbox ?? probe.sandbox,
+            }
+          : null;
+
+    // A similarly NAMED audience, shown for context only - never reused,
+    // never activated, never sized in place of this request's own audience.
     //
-    // THE BUG THIS FIXES: these terms used to be ONLY intake's own
-    // categorization fields (campaign_name/lifecycle_journey/line_of_business/
-    // customer_type) - never the audience's actual criteria. A brief asking
-    // for "an audience where ECID exists" would never match a real, already-
-    // built segment literally named "Has ECID", because "ecid" was never one
-    // of the words being searched for. Adding keywords from the brief/
-    // audience_description is what makes that match findable.
+    // (Terms: intake's categorization fields plus keywords from the brief -
+    // see criteriaKeywords.)
     const terms = [
       fields.campaign_name, fields.lifecycle_journey, fields.line_of_business, fields.customer_type,
       ...criteriaKeywords([brief, fields.audience_description].filter(Boolean).join(" ")),
     ]
       .filter(Boolean)
       .map(String);
-    // Reuse Review's segment search when it read successfully. Review now
-    // searches the IDENTICAL terms (aep-context.ts's segmentSearchTerms was
-    // aligned to this exact derivation), so a successful "no match" from
-    // Review is as authoritative as one we'd compute here - reusing it
-    // saves the adobe_list_segments read. A failed read (read: false) is not
-    // reused; we search ourselves. NEVER reused in Demo mode, same reason as
-    // the probe above: Review's search wasn't scoped to "tapdemo".
+    // Reuse Review's name search when it read successfully (identical terms,
+    // see aep-context.ts). Never in Demo mode: Review's search may not have
+    // been scoped to "tapdemo".
     const priorSegment: SegmentMatch | undefined = priorReview?.segmentMatch;
     const reusedSegment = mode !== "demo" && !!priorSegment?.read;
     const existing = reusedSegment ? priorSegment! : await findExistingSegment("audience_creation", terms, sandbox);
+    const similar = existing.id && existing.id !== audience?.segmentId ? existing : null;
 
     // Off by default - see this file's docstring and activation.ts. Only
     // runs the destination check/write when intake's own `destination`
@@ -412,8 +463,10 @@ async function handlePost(req: NextRequest) {
     const activation =
       mode !== "demo" && activationIntent.requested
         ? await activateAudience("audience_creation", {
-            segmentId: existing.id,
-            segmentName: existing.name,
+            // Only this request's own audience is ever activated - never a
+            // similarly named one (see `similar` above).
+            segmentId: audience?.segmentId ?? null,
+            segmentName: audience?.name ?? null,
             destinationName: activationIntent.destinationName,
           })
         : undefined;
@@ -423,16 +476,13 @@ async function handlePost(req: NextRequest) {
     // started by our own blind spot.
     const attrState = await attributeRequestState(body.runId, attributesAvailable !== false, missing);
 
-    // B3: the audience's predicted size, once a segment id exists - either
-    // reused (existing.id) or just created (segmentCreation). Every failure
-    // (the known gateway 404 included) is caught inside estimateSegmentSize
-    // and reported as unavailable, never an error and never a fabricated
-    // zero - see that function's docstring.
-    const segmentIdForEstimate =
-      existing.id || (segmentCreation && segmentCreation.attempted && segmentCreation.created ? segmentCreation.segmentId : null);
-    const sizeEstimate: SegmentSizeEstimate = segmentIdForEstimate
-      ? await estimateSegmentSize("audience_creation", segmentIdForEstimate, sandbox)
-      : { available: false, reason: "no segment id yet to estimate from" };
+    // B3: the audience's real size, from an evaluation job on this request's
+    // own segment (created, or the identical-rule match). A job usually takes
+    // a few minutes, so this often comes back `pending` with the job id and
+    // the audience card polls /api/audience-size until the count lands.
+    const sizeEstimate: SegmentSizeEstimate = audience
+      ? await estimateSegmentSize("audience_creation", audience.segmentId, sandbox)
+      : { available: false, reason: "no audience was created, so there is nothing to count yet" };
 
     const statusMessage = [
       path.buildPath === "fac"
@@ -444,34 +494,36 @@ async function handlePost(req: NextRequest) {
         : `Attribute availability is UNDETERMINED: ${probe.error}` +
           (probe.sandbox ? ` (sandbox "${probe.sandbox}")` : "") +
           ". No attribute request has been opened on the strength of that.",
-      existing.id
-        ? `Reusing existing audience "${existing.name}".`
-        : existing.read
-          ? `No existing audience matched (${existing.considered} checked).`
-          : `Could not list existing audiences: ${existing.error}.`,
+      audience
+        ? audience.source === "created"
+          ? `Created the audience "${audience.name}" (${audience.segmentId}) in AEP${audience.sandbox ? ` sandbox "${audience.sandbox}"` : ""}` +
+            `${repairedAfterRejection ? " (the first rule was rejected by AEP and corrected)" : ""}. ` +
+            `${audience.interpretation ? `${audience.interpretation} ` : ""}Rule: ${audience.pql}`
+          : `An audience with this exact rule already exists: "${audience.name}" (${audience.segmentId}) - using it rather than creating a duplicate. Rule: ${audience.pql}`
+        : pqlSynthesis?.synthesized
+          ? segmentCreation?.attempted
+            ? `Wrote the rule ${pqlSynthesis.pql}, but AEP did not create the audience: ${segmentCreation.created ? "" : segmentCreation.reason}`
+            : `Wrote the rule ${pqlSynthesis.pql} (fields verified present: ${pqlSynthesis.fieldsUsed.join(", ")}). Not created - ` +
+              "audience creation is off in Governed mode (set AUDIENCE_CREATE_SEGMENT=true, or use Demo mode)."
+          : pqlSynthesis
+            ? `Could not write a rule for this audience: ${pqlSynthesis.reason}.`
+            : "",
+      similar
+        ? `A similarly named audience exists - "${similar.name}" (${similar.id}) - but its rule differs, so it was not reused.`
+        : !existing.read
+          ? `Could not list existing audiences: ${existing.error}.`
+          : "",
       gap.hasGap ? "Identity gap flagged: see identityGap." : "",
-      pqlGuidance
-        ? pqlGuidance.localReference.available
-          ? `PQL reference: ${pqlGuidance.localReference.path} (${pqlGuidance.localReference.categoryCount} categories) - build the segment expression against this, not the knowledge base.`
-          : `PQL reference unavailable: ${pqlGuidance.localReference.error}.`
-        : "",
-      pqlSynthesis
-        ? pqlSynthesis.synthesized
-          ? segmentCreation
-            ? segmentCreation.attempted && segmentCreation.created
-              ? `Created the audience segment "${segmentCreation.name}" (${segmentCreation.segmentId}) from a verified PQL expression (fields: ${pqlSynthesis.fieldsUsed.join(", ")}).`
-              : `Verified PQL expression drafted, but the segment was not created: ${segmentCreation.attempted ? segmentCreation.reason : "creation not attempted"}. See pqlSynthesis/segmentCreation in metadata.`
-            : `Drafted a candidate PQL expression (fields verified present: ${pqlSynthesis.fieldsUsed.join(", ")}) - see pqlSynthesis in metadata. Draft for a human to build from; segment creation is off (set AUDIENCE_CREATE_SEGMENT=true to enable).`
-          : `No PQL expression drafted: ${pqlSynthesis.reason}.`
-        : "",
       activation
         ? formatActivationMessage(activation)
         : mode === "demo" && activationIntent.requested
           ? `Demo mode: activation to "${activationIntent.destinationName ?? "the requested destination"}" was skipped - no activation to destinations, no spend.`
           : "",
-      sizeEstimate.available
-        ? `Estimated audience size: ${sizeEstimate.count.toLocaleString()}.`
-        : `Size available after next evaluation (${sizeEstimate.reason}).`,
+      audience
+        ? sizeEstimate.available
+          ? `Audience size: ${sizeEstimate.count.toLocaleString()} profiles.`
+          : `Size: ${sizeEstimate.reason}.`
+        : "",
       attrState.note,
       cutoff.note,
     ]
@@ -491,6 +543,7 @@ async function handlePost(req: NextRequest) {
       mode,
       label: mode === "demo" ? "Demo – not approved" : null,
       sizeEstimate,
+      audience,
       ...(activation ? { activation } : {}),
     };
 
@@ -531,7 +584,11 @@ async function handlePost(req: NextRequest) {
         attributesNeeded: needed,
         attributesMissing: missing,
         schemaEvidence: probe.evidence,
-        existingSegment: existing.id ? { id: existing.id, name: existing.name } : null,
+        // A similarly NAMED segment, context only - never reused (see `similar`).
+        similarSegment: similar ? { id: similar.id, name: similar.name } : null,
+        sameRuleSegment: sameRule,
+        catalogFieldCount: catalog.length,
+        repairedAfterRejection,
         // B7's request-age metric, now real wall-clock seconds off the
         // durable attribute_requests row (null when nothing is open).
         requestAgeSeconds: attrState.ageSeconds,
@@ -551,7 +608,7 @@ async function handlePost(req: NextRequest) {
         // verified expression, or AUDIENCE_CREATE_SEGMENT off), else the
         // created id or an honest dry-run with the payload it would have sent.
         segmentCreation,
-        segmentCreationEnabled: segmentCreationEnabled(),
+        segmentCreationEnabled: creationOn,
         nightlyCutoff: cutoff,
         activationRequested: activationIntent.requested,
         activationDestination: activationIntent.destinationName,

@@ -42,8 +42,8 @@ beforeEach(() => {
 describe("fieldEntries", () => {
   it("returns full PQL paths and types, without definitions/customFields wrappers", () => {
     expect(fieldEntries(GROUPS["https://ns.adobe.com/taplondonptrsd/mixins/eligibility"])).toEqual([
-      { path: "_taplondonptrsd", type: "object", description: null },
-      { path: "_taplondonptrsd.SEPeligible", type: "string", description: "Y/N flag" },
+      { path: "_taplondonptrsd", type: "object", description: null, title: null, values: null },
+      { path: "_taplondonptrsd.SEPeligible", type: "string", description: "Y/N flag", title: "SEP eligible", values: null },
     ]);
   });
 });

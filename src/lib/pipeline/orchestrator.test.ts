@@ -191,3 +191,20 @@ describe("the approval gate - Intake to Review (unchanged)", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("the approval gate - Demo mode has none", () => {
+  it("a Demo run goes Intake -> Review -> Audience Creation in one call", async () => {
+    const run = baseRun({ status: "running", current_step: 0, input: { brief: "test", mode: "demo" } });
+    installDbMock(run);
+    installFetchMock({
+      "/api/agents/intake": { status: "completed", output: { mode: "demo" } },
+      "/api/agents/review": { status: "completed", output: { mode: "demo" } },
+      "/api/agents/audience-creation": { status: "completed", output: { audience: null } },
+    });
+
+    const result = await runPipeline({ brief: "test", mode: "demo" }, "http://localhost:3100");
+
+    expect(result.status).toBe("completed");
+    expect(result.current_step).toBe(3);
+  });
+});

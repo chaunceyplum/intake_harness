@@ -101,6 +101,8 @@ type ReviewInput = {
   /** The Workfront issue, when Agent 1 managed to create one. */
   workfront?: { created?: boolean; objId?: string; objCode?: string };
   loopCount?: number;
+  /** The run's mode from Intake - passed through untouched (see reviewMode). */
+  mode?: "demo" | "governed";
 };
 
 /**
@@ -229,7 +231,7 @@ async function handlePost(req: NextRequest) {
       // Clean: this is the handoff to Agent 3. Ask AEP what it can already
       // answer about this audience (see the docstring above) and document it -
       // in the brief Agent 3 gets, and on the Workfront issue for a human.
-      const aepContext = await gatherAepContext(fields, input.brief);
+      const aepContext = await gatherAepContext(fields, input.brief, input.mode === "demo" ? "tapdemo" : undefined);
       const aepNote = formatAepContextNote(aepContext);
 
       // The AEP context is documented on the issue two ways. The COMMENT is

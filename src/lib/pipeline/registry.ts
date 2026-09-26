@@ -96,6 +96,10 @@ export const PIPELINE: AgentDefinition[] = [
       "adobe_get_schema",
       "adobe_get_union_schema",
       "adobe_get_field_group",
+      // Standard field groups describe fields by data-type link
+      // (homeAddress -> xdm/common/address); aep.ts's catalog build follows
+      // those links so homeAddress.stateProvince etc. are findable.
+      "adobe_get_data_type",
     ],
     contextAccess: [], // first in the pipeline — nothing prior to see
   },
@@ -147,6 +151,10 @@ export const PIPELINE: AgentDefinition[] = [
       // fieldGroupRefs/FIELD_GROUP_SAMPLE for exactly how this is used and
       // why it's bounded.
       "adobe_get_field_group",
+      // Standard field groups describe fields by data-type link
+      // (homeAddress -> xdm/common/address); aep.ts's catalog build follows
+      // those links so homeAddress.stateProvince etc. are findable.
+      "adobe_get_data_type",
       // adobe_get_segment was here but is never called by anything review
       // does (grep-verified, 21 Sep 2026) - findExistingSegment only ever
       // calls adobe_list_segments. Dropped rather than kept "just in case".
@@ -198,6 +206,11 @@ export const PIPELINE: AgentDefinition[] = [
       "adobe_get_segment_estimate",
       "adobe_list_segments",
       "adobe_create_segment",
+      // Sizing: an on-demand evaluation job for just this audience, read
+      // back for its per-segment count (aep.ts's estimateSegmentSize) - the
+      // estimate tools above 404 on every segment.
+      "adobe_create_segment_job",
+      "adobe_get_segment_job",
       // B4: check whether the attributes an audience needs already exist
       // in AEP before opening a GTO/attribute request.
       "adobe_list_schemas",
@@ -209,6 +222,10 @@ export const PIPELINE: AgentDefinition[] = [
       // fieldGroupRefs: a class schema's fields usually live in a
       // referenced field group, not inline on the class schema itself.
       "adobe_get_field_group",
+      // Standard field groups describe fields by data-type link
+      // (homeAddress -> xdm/common/address); aep.ts's catalog build follows
+      // those links so homeAddress.stateProvince etc. are findable.
+      "adobe_get_data_type",
       // Explicit, on-command activation ONLY (see agents/audience/
       // activation.ts) - checking whether an audience is already wired to a
       // named destination's dataflow, and activating it when it isn't. Two

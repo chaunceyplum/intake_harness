@@ -27,7 +27,7 @@
  * unchanged. Pure except for the LLM call itself; verification is deterministic.
  */
 
-import type { SchemaProbe } from "./aep";
+import type { ProfileField, SchemaProbe } from "./aep";
 import type { PqlGuidance } from "@/lib/agents/review/pql-context";
 import { resolveLlmClient, type LlmClient } from "@/lib/llm";
 import { reflectLoop } from "@/lib/llm/reflect";
@@ -56,6 +56,10 @@ export type PqlSynthesis = {
   attempts: number;
   /** True when the FIRST attempt referenced an unverified field and a revision was tried. */
   revised: boolean;
+  /** The rule in plain English, for the person who asked - "Profiles whose Is CBM member flag is Y". */
+  interpretation?: string | null;
+  /** A short audience name the model proposed from the request. */
+  suggestedName?: string | null;
 };
 
 const NOT_SYNTHESIZED = (reason: string, extra: Partial<PqlSynthesis> = {}): PqlSynthesis => ({
@@ -107,6 +111,15 @@ const SYSTEM = [
   "HARD RULES:",
   "- Use ONLY the profile field names provided as available. Never reference a",
   "  field that is not in that list, even if it seems obvious it should exist.",
+  "- The marketer writes in business language, not field names. Match their words",
+  "  to fields by TITLE and DESCRIPTION as well as path: \"customers who have CBM\"",
+  "  means a field titled \"Is CBM member\"; \"SEP eligible\" means one titled",
+  "  \"SEP eligible\". Prefer the tenant's own fields (_tenant.*) when they fit.",
+  "- Compare to the values the field actually holds: a string described as a",
+  "  \"Y/N flag\" is = \"Y\", a boolean is = true, an enum uses one of its listed",
+  "  values. \"Has an email\" means the email field exists (X.isNotNull()).",
+  "- Fields inside an array need array syntax from the reference, never a plain",
+  "  dotted comparison.",
   "- Use ONLY PQL syntax from the reference provided.",
   "- The expression MUST capture EVERY condition in the criteria - not just the",
   "  ones you happen to have a field for. If even ONE condition (a region, a",
@@ -123,7 +136,7 @@ const SYSTEM = [
   "Return ONLY JSON.",
 ].join("\n");
 
-type RawSynth = { pql?: unknown; fieldsUsed?: unknown; missing?: unknown };
+type RawSynth = { pql?: unknown; fieldsUsed?: unknown; missing?: unknown; interpretation?: unknown; name?: unknown };
 
 /** Pull the first JSON object out of a fenced or prose-wrapped response. */
 function extractJson(text: string): RawSynth {
@@ -151,8 +164,14 @@ export function isFieldPresent(field: string, presentNames: string[]): boolean {
     .pop();
   if (!leaf) return false;
   const target = leaf.toLowerCase();
-  // presentNames are full dotted paths now (aep.ts's probe evidence); a
-  // bare leaf name from an older probe still compares the same way.
+  // With full paths on both sides (the catalog), the whole path must match:
+  // across ~750 fields a leaf like "address" exists in many places, so a
+  // leaf-only check would pass an invented `_tenant.foo.address`. A bare
+  // leaf, or a leaf-only present list from an older probe, compares by leaf.
+  const path = String(field).trim().toLowerCase();
+  if (path.includes(".") && presentNames.some((n) => n.includes("."))) {
+    return presentNames.some((n) => n.toLowerCase() === path);
+  }
   return presentNames.some((n) => (n.split(".").pop() || n).toLowerCase() === target);
 }
 
@@ -186,6 +205,17 @@ export async function synthesizePql(
   probe: SchemaProbe,
   pqlGuidance: PqlGuidance,
   client?: LlmClient | null,
+  opts: {
+    /**
+     * The sandbox's whole field catalog (aep.ts's profileCatalog). When
+     * given, the model chooses from every field - by title and description,
+     * not just the probe's name matches - and verification checks against
+     * it. Without it, only probe.evidence is offered, as before.
+     */
+    catalog?: ProfileField[];
+    /** Why AEP rejected the previous attempt's rule, so this one can fix it. */
+    feedback?: string;
+  } = {},
 ): Promise<PqlSynthesis> {
   const { client: resolvedClient, configError } = resolveLlmClient(client);
   if (!resolvedClient) {
@@ -204,10 +234,28 @@ export async function synthesizePql(
       `attribute availability is undetermined (${probe.error}); not synthesizing PQL against an unknown field set`,
     );
   }
-  const presentNames = probe.evidence ?? [];
+  const catalog = opts.catalog?.length ? opts.catalog : null;
+  const presentNames = catalog ? catalog.map((f) => f.path) : probe.evidence ?? [];
   if (presentNames.length === 0) {
     return NOT_SYNTHESIZED("the probe confirmed no concrete field names to build against");
   }
+  // Hints: fields the brief named outright (probe.evidence), listed first.
+  const hinted = new Set(probe.evidence ?? []);
+  const fieldList = catalog
+    ? [...catalog]
+        .sort((a, b) => Number(hinted.has(b.path)) - Number(hinted.has(a.path)))
+        .map((f) =>
+          [f.path, f.type, f.title, f.description, f.values?.length ? `values: ${f.values.slice(0, 12).join("/")}` : ""]
+            .filter(Boolean)
+            .join(" | "),
+        )
+        .join("\n")
+    : presentNames
+        .map((n) => {
+          const about = [probe.fieldTypes?.[n], probe.fieldDescriptions?.[n]].filter(Boolean).join(" - ");
+          return about ? `${n} (${about})` : n;
+        })
+        .join(", ");
 
   const reference = pqlGuidance.localReference.available ? pqlGuidance.localReference.content ?? "" : "";
   if (!reference) {
@@ -218,20 +266,19 @@ export async function synthesizePql(
     [
       `Audience criteria: ${criteria.trim()}`,
       "",
-      `Available profile fields - full PQL paths with XDM type and the schema's description, which is the only ` +
-        `source for a string flag's values (use ONLY these fields): ${presentNames
-        .map((n) => {
-          const about = [probe.fieldTypes?.[n], probe.fieldDescriptions?.[n]].filter(Boolean).join(" - ");
-          return about ? `${n} (${about})` : n;
-        })
-        .join(", ")}`,
+      "Available profile fields - full PQL path | XDM type | title | description | values. The title and " +
+        "description are how the marketer will name a field; the description is the only source for a string " +
+        `flag's values. Use ONLY these fields:\n${fieldList}`,
       "",
       "PQL function reference (use ONLY this syntax):",
       // Bound the reference so a huge doc can't blow the context; the
       // function categories are near the top.
       reference.slice(0, 12_000),
       "",
-      'Respond with JSON: { "pql": "the expression, or empty string if not expressible", "fieldsUsed": ["field", ...], "missing": ["what you would need but was not available", ...] }',
+      'Respond with JSON: { "pql": "the expression, or empty string if not expressible", "fieldsUsed": ["field", ...], ' +
+        '"missing": ["what you would need but was not available", ...], "interpretation": "one plain-English sentence ' +
+        'saying exactly who is in the audience, naming the fields by title", "name": "a short audience name, max 60 characters" }',
+      ...(opts.feedback ? ["", `AEP rejected the previous rule for this audience: ${opts.feedback}. Write a corrected rule.`] : []),
       ...(extra ? ["", extra] : []),
     ].join("\n");
 
@@ -247,6 +294,8 @@ export async function synthesizePql(
           pql: typeof raw.pql === "string" ? raw.pql.trim() : "",
           fieldsUsed: Array.isArray(raw.fieldsUsed) ? raw.fieldsUsed.map((f) => String(f)).filter(Boolean) : [],
           missing: Array.isArray(raw.missing) ? raw.missing.map((m) => String(m)) : [],
+          interpretation: typeof raw.interpretation === "string" ? raw.interpretation.trim() : "",
+          name: typeof raw.name === "string" ? raw.name.trim().slice(0, 80) : "",
         };
       },
       // An empty pql is an honest "the available fields are insufficient" -
@@ -261,12 +310,12 @@ export async function synthesizePql(
       revise: ({ issues }) =>
         buildPrompt(
           `Your previous expression referenced field(s) not in the available list: ${issues.join("; ")}. ` +
-            `Available fields are ONLY: ${presentNames.join(", ")}. Rewrite the expression using only those ` +
+            "Use ONLY fields from the list above. Rewrite the expression using only those " +
             "fields, or return an empty pql (\"\") if the audience truly cannot be expressed with them.",
         ),
     });
 
-    const { pql, fieldsUsed, missing } = outcome.result;
+    const { pql, fieldsUsed, missing, interpretation, name } = outcome.result;
     const revised = outcome.attempts > 1;
 
     if (!pql) {
@@ -297,6 +346,8 @@ export async function synthesizePql(
       unverifiedFields: [],
       attempts: outcome.attempts,
       revised,
+      interpretation: interpretation || null,
+      suggestedName: name || null,
     };
   } catch (err) {
     return NOT_SYNTHESIZED(`PQL synthesis failed (${(err as Error).message}); reporting the build path without an expression`);
@@ -313,7 +364,10 @@ export async function synthesizePql(
  * When off, a synthesized expression is still drafted and attached for a human
  * to build from - the read-only behaviour is unchanged.
  */
-export function segmentCreationEnabled(): boolean {
+export function segmentCreationEnabled(mode: "demo" | "governed" = "governed"): boolean {
+  // Demo mode exists to build a real audience in the tapdemo sandbox - its
+  // whole promise - so it always creates. Governed mode stays opt-in.
+  if (mode === "demo") return true;
   return String(process.env.AUDIENCE_CREATE_SEGMENT || "").trim().toLowerCase() === "true";
 }
 
@@ -379,21 +433,23 @@ export async function createSegmentFromPql(
   const segmentName = name.trim() || "Untitled audience";
 
   try {
-    const result = await callMcpTool<{ id?: string; segmentId?: string; data?: { id?: string } }>(
+    const result = await callMcpTool<{ id?: string; segmentId?: string; data?: { id?: string }; segment?: { id?: string } }>(
       taskId,
       "adobe_create_segment",
       {
         name: segmentName,
-        // AEP segment definitions carry the PQL under an expression object of
-        // type "PQL", format "pql/text". The gateway tool accepts the fields
-        // below; a shape mismatch surfaces as a normal tool error and is
-        // reported (created:false), not thrown.
-        expression: { type: "PQL", format: "pql/text", value: synthesis.pql },
-        description: `Drafted by Agent 3 from verified fields: ${synthesis.fieldsUsed.join(", ")}`,
+        // The gateway tool takes the rule as a plain `pql_expression` string
+        // (verified against its live inputSchema, 26 Sep 2026). This sent an
+        // AEP-style `expression: {type, format, value}` object before, which
+        // the tool does not read - so no create could ever have carried a rule.
+        pql_expression: synthesis.pql,
+        description:
+          (synthesis.interpretation ? `${synthesis.interpretation} ` : "") +
+          `Built by the intake agent from verified fields: ${synthesis.fieldsUsed.join(", ")}`,
         ...(sandbox ? { sandbox } : {}),
       },
     );
-    const segmentId = String(result?.id || result?.segmentId || result?.data?.id || "");
+    const segmentId = String(result?.id || result?.segmentId || result?.data?.id || result?.segment?.id || "");
     if (!segmentId) {
       return {
         attempted: true,

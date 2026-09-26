@@ -277,7 +277,15 @@ function schemaRecords(result: unknown): Array<{ title: string; id: string }> {
 
 /** Every property name in a schema (or field group) document, however deeply nested. */
 /** A profile field as PQL addresses it: full dotted path, XDM type, and the schema's own description of it. */
-export type ProfileField = { path: string; type: string | null; description?: string | null };
+export type ProfileField = {
+  path: string;
+  type: string | null;
+  description?: string | null;
+  /** The schema's display title ("Is CBM member") - how a person, and the brief, names the field. */
+  title?: string | null;
+  /** Allowed values when the schema enumerates them (`meta:enum` labels, else `enum`). */
+  values?: string[] | null;
+};
 
 /**
  * Every field under a schema/field-group document, with its full dotted path
@@ -286,33 +294,56 @@ export type ProfileField = { path: string; type: string | null; description?: st
  * come from `properties` keys only, so wrappers like `definitions.customFields`
  * and `allOf` never leak into it.
  */
-export function fieldEntries(schema: unknown): ProfileField[] {
+export function fieldEntries(schema: unknown, prefix = ""): ProfileField[] {
+  return walkFields(schema, prefix).fields;
+}
+
+/**
+ * fieldEntries plus the data-type links it could not expand itself.
+ *
+ * Adobe's standard field groups describe most fields by reference -
+ * `personalEmail` is `{ $ref: ".../xdm/context/email" }` and `homeAddress`
+ * is `{ $ref: ".../xdm/common/address" }` - so walking the group alone
+ * yields `personalEmail` but never `personalEmail.address`. `refs` names
+ * each such link with the path it hangs under, for probeSchemas'
+ * catalog build to resolve and graft.
+ */
+function walkFields(schema: unknown, prefix = ""): { fields: ProfileField[]; refs: Array<{ path: string; ref: string }> } {
   const out = new Map<string, ProfileField>();
-  const walk = (v: unknown, prefix: string, depth: number) => {
+  const refs: Array<{ path: string; ref: string }> = [];
+  const walk = (v: unknown, at: string, depth: number) => {
     if (depth > 16 || v == null || typeof v !== "object") return;
-    if (Array.isArray(v)) { v.forEach((x) => walk(x, prefix, depth + 1)); return; }
+    if (Array.isArray(v)) { v.forEach((x) => walk(x, at, depth + 1)); return; }
     const o = v as Record<string, unknown>;
     const props = o.properties;
     if (props && typeof props === "object") {
       for (const [key, child] of Object.entries(props as Record<string, unknown>)) {
-        const path = prefix ? `${prefix}.${key}` : key;
+        const path = at ? `${at}.${key}` : key;
         const c = (child && typeof child === "object" ? child : {}) as Record<string, unknown>;
         if (!out.has(path)) {
+          const labels = c["meta:enum"] && typeof c["meta:enum"] === "object"
+            ? Object.keys(c["meta:enum"] as Record<string, unknown>)
+            : Array.isArray(c.enum) ? (c.enum as unknown[]).map(String) : [];
           out.set(path, {
             path,
             type: String(c["meta:xdmType"] ?? c.type ?? "") || null,
             description: String(c.description ?? "").trim() || null,
+            title: String(c.title ?? "").trim() || null,
+            values: labels.length ? labels : null,
           });
         }
+        const items = c.items && typeof c.items === "object" ? (c.items as Record<string, unknown>) : null;
+        const ref = typeof c.$ref === "string" ? c.$ref : typeof items?.$ref === "string" ? String(items.$ref) : "";
+        if (ref && !c.properties && !items?.properties) refs.push({ path, ref });
         walk(child, path, depth + 1);
       }
     }
     for (const [key, val] of Object.entries(o)) {
-      if (key !== "properties" && val && typeof val === "object") walk(val, prefix, depth + 1);
+      if (key !== "properties" && val && typeof val === "object") walk(val, at, depth + 1);
     }
   };
-  walk(schema, "", 0);
-  return [...out.values()];
+  walk(schema, prefix, 0);
+  return { fields: [...out.values()], refs };
 }
 
 function leafOf(path: string): string {
@@ -332,15 +363,22 @@ function leafOf(path: string): string {
  * tenant's custom attributes and are not fetchable the same way a
  * tenant-registered field group is.
  */
-function fieldGroupRefs(schema: unknown): string[] {
+function fieldGroupRefs(schema: unknown, includeStandard = false): string[] {
   const refs = new Set<string>();
+  // The union also lists Adobe's standard profile field groups
+  // (xdm/context/profile-personal-details: personalEmail, homeAddress, ...).
+  // Those are fetchable as field groups; only the Profile class itself and
+  // xdm/data/* are not.
+  const skip = includeStandard
+    ? (ref: string) => /ns\.adobe\.com\/xdm\/data\//.test(ref) || /ns\.adobe\.com\/xdm\/context\/profile$/.test(ref)
+    : (ref: string) => /ns\.adobe\.com\/xdm\/(context|data)\//.test(ref);
   const walk = (v: unknown, depth = 0) => {
     if (depth > 12 || v == null) return;
     if (Array.isArray(v)) { v.forEach((x) => walk(x, depth + 1)); return; }
     if (typeof v !== "object") return;
     const o = v as Record<string, unknown>;
     const ref = o.$ref;
-    if (typeof ref === "string" && ref && !/ns\.adobe\.com\/xdm\/(context|data)\//.test(ref)) {
+    if (typeof ref === "string" && ref && !ref.startsWith("#") && !skip(ref)) {
       refs.add(ref);
     }
     for (const val of Object.values(o)) walk(val, depth + 1);
@@ -353,7 +391,7 @@ function fieldGroupRefs(schema: unknown): string[] {
 function sandboxFrom(records: Array<{ id: string }>): string | null {
   for (const r of records) {
     const m = r.id.match(/ns\.adobe\.com\/([^/]+)\//);
-    if (m) return m[1];
+    if (m && m[1] !== "xdm") return m[1];
   }
   return null;
 }
@@ -438,19 +476,22 @@ export async function probeSchemas(
     // This tenant's union view comes back as `allOf` $refs to ~90 field
     // groups with no inline properties, so reading it alone found nothing
     // and the probe fell back to sampling 6 schemas - which missed fields
-    // like `SEPeligible`. Open every field group the union lists instead:
-    // that IS the sandbox's whole profile, not a sample of it.
+    // like `SEPeligible`. Build the whole catalog from what the union lists
+    // instead: that IS the sandbox's profile, not a sample of it.
     if (fields.size === 0) {
-      const resolved = await resolveUnionFieldGroups(taskId, union, sandboxOverride);
-      resolved.docs.forEach(collect);
-      fieldGroupsInspected += resolved.docs.length;
-      if (resolved.error) lastError = resolved.error;
+      const built = await buildCatalog(taskId, union, sandboxOverride);
+      for (const f of built.fields) {
+        fields.add(leafOf(f.path));
+        if (!profileFields.has(f.path)) profileFields.set(f.path, f);
+      }
+      fieldGroupsInspected += built.groupsOpened;
+      if (built.error) lastError = built.error;
     }
     if (fields.size > 0) {
       unionResolved = true;
       inspected = 1;
       const unionRecords = schemaRecords(union);
-      sandbox = sandboxFrom(unionRecords);
+      sandbox = sandboxOverride ?? sandboxFrom(unionRecords);
     }
   } catch (err) {
     lastError = (err as Error).message;
@@ -476,7 +517,7 @@ export async function probeSchemas(
       };
     }
 
-    sandbox = sandboxFrom(records);
+    sandbox = sandboxOverride ?? sandboxFrom(records);
     const candidates = records.filter((r) => PROFILE_SCHEMA_HINT.test(r.title)).slice(0, SCHEMA_SAMPLE);
     candidateCount = candidates.length;
 
@@ -584,45 +625,118 @@ export async function probeSchemas(
   };
 }
 
-/** Field groups opened at once while resolving the union - enough to finish ~90 quickly without flooding the gateway. */
+/** Field groups / data types opened at once - enough to finish ~100 quickly without flooding the gateway. */
 const UNION_FETCH_CONCURRENCY = 8;
 /** Upper bound on field groups opened from one union view. */
-const UNION_FIELD_GROUP_CAP = 200;
-/** Resolved union field groups per sandbox, reused across agents in the same run for a few minutes. */
-const UNION_CACHE_MS = 5 * 60_000;
-const unionCache = new Map<string, { at: number; docs: unknown[] }>();
+const UNION_FIELD_GROUP_CAP = 250;
+/** Data-type links are followed this many levels deep (address -> geo is 2). */
+const DATA_TYPE_DEPTH = 2;
+/** A built catalog per sandbox, reused across agents and runs for a few minutes. */
+const CATALOG_CACHE_MS = 5 * 60_000;
+const catalogCache = new Map<string, { at: number; fields: ProfileField[]; groupsOpened: number }>();
 
-async function resolveUnionFieldGroups(
+async function fetchAll(
   taskId: TaskId,
-  union: unknown,
+  tool: "adobe_get_field_group" | "adobe_get_data_type",
+  ids: string[],
   sandboxOverride?: string,
-): Promise<{ docs: unknown[]; error: string | null }> {
-  const refs = fieldGroupRefs(union).slice(0, UNION_FIELD_GROUP_CAP);
-  if (!refs.length) return { docs: [], error: null };
-
-  const cacheKey = `${sandboxOverride ?? ""}|${refs.join(",")}`;
-  const cached = unionCache.get(cacheKey);
-  if (cached && Date.now() - cached.at < UNION_CACHE_MS) return { docs: cached.docs, error: null };
-
-  const docs: unknown[] = [];
+): Promise<{ docs: Array<{ id: string; doc: unknown }>; error: string | null }> {
+  const docs: Array<{ id: string; doc: unknown }> = [];
   let error: string | null = null;
-  for (let i = 0; i < refs.length; i += UNION_FETCH_CONCURRENCY) {
+  for (let i = 0; i < ids.length; i += UNION_FETCH_CONCURRENCY) {
+    const slice = ids.slice(i, i + UNION_FETCH_CONCURRENCY);
     const batch = await Promise.allSettled(
-      refs.slice(i, i + UNION_FETCH_CONCURRENCY).map((ref) =>
-        callMcpTool<unknown>(taskId, "adobe_get_field_group", {
-          field_group_id: ref,
+      slice.map((id) =>
+        callMcpTool<unknown>(taskId, tool, {
+          ...(tool === "adobe_get_field_group" ? { field_group_id: id } : { data_type_id: id }),
           ...(sandboxOverride ? { sandbox: sandboxOverride } : {}),
         }),
       ),
     );
-    for (const r of batch) {
-      if (r.status === "fulfilled") docs.push(r.value);
+    batch.forEach((r, j) => {
+      if (r.status === "fulfilled") docs.push({ id: slice[j], doc: r.value });
       else error = (r.reason as Error).message;
-    }
+    });
   }
-  // Only a complete read is cached - a partial one would keep hiding a field.
-  if (!error) unionCache.set(cacheKey, { at: Date.now(), docs });
   return { docs, error };
+}
+
+/**
+ * Every profile field in the sandbox, as PQL paths with titles, types,
+ * descriptions and allowed values - built from the field groups the union
+ * view lists, with data-type links (`homeAddress` -> xdm/common/address)
+ * resolved into real nested paths (`homeAddress.stateProvince`).
+ *
+ * This is what lets a plain-English brief find its fields: "customers who
+ * have CBM" names no field literally, but the catalog carries
+ * `_taplondonptrsd.isCBMmember` titled "Is CBM member", and PQL synthesis
+ * reads the whole catalog (see pql-synth.ts).
+ */
+async function buildCatalog(
+  taskId: TaskId,
+  union: unknown,
+  sandboxOverride?: string,
+): Promise<{ fields: ProfileField[]; groupsOpened: number; error: string | null }> {
+  const groupIds = fieldGroupRefs(union, true).slice(0, UNION_FIELD_GROUP_CAP);
+  if (!groupIds.length) return { fields: [], groupsOpened: 0, error: null };
+
+  const cacheKey = `${sandboxOverride ?? ""}|${groupIds.join(",")}`;
+  const cached = catalogCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < CATALOG_CACHE_MS) {
+    return { fields: cached.fields, groupsOpened: cached.groupsOpened, error: null };
+  }
+
+  const groups = await fetchAll(taskId, "adobe_get_field_group", groupIds, sandboxOverride);
+  const out = new Map<string, ProfileField>();
+  let pending: Array<{ path: string; ref: string }> = [];
+  for (const { doc } of groups.docs) {
+    const walked = walkFields(doc);
+    walked.fields.forEach((f) => { if (!out.has(f.path)) out.set(f.path, f); });
+    pending.push(...walked.refs);
+  }
+
+  let error = groups.error;
+  const typeDocs = new Map<string, unknown>();
+  for (let depth = 0; depth < DATA_TYPE_DEPTH && pending.length; depth++) {
+    const unseen = [...new Set(pending.map((p) => p.ref))].filter((r) => !typeDocs.has(r));
+    const fetched = await fetchAll(taskId, "adobe_get_data_type", unseen, sandboxOverride);
+    fetched.docs.forEach(({ id, doc }) => typeDocs.set(id, doc));
+    if (fetched.error) error = error ?? fetched.error;
+    const next: Array<{ path: string; ref: string }> = [];
+    for (const { path, ref } of pending) {
+      const doc = typeDocs.get(ref);
+      if (!doc) continue;
+      const walked = walkFields(doc, path);
+      walked.fields.forEach((f) => { if (!out.has(f.path)) out.set(f.path, f); });
+      next.push(...walked.refs);
+    }
+    pending = next;
+  }
+
+  const fields = [...out.values()];
+  // Only a complete read of the field groups is cached - a partial one would keep hiding a field.
+  if (!groups.error) catalogCache.set(cacheKey, { at: Date.now(), fields, groupsOpened: groups.docs.length });
+  return { fields, groupsOpened: groups.docs.length, error };
+}
+
+/**
+ * The sandbox's profile field catalog for PQL synthesis - the same build
+ * probeSchemas runs, normally answered from its cache. Leaf-level fields
+ * only: containers (`object`) are not something a rule compares against.
+ * Empty when the union view or the field groups cannot be read.
+ */
+export async function profileCatalog(taskId: TaskId, sandboxOverride?: string): Promise<ProfileField[]> {
+  try {
+    const union = await callMcpTool<unknown>(taskId, "adobe_get_union_schema", {
+      class_id: PROFILE_UNION_CLASS,
+      ...(sandboxOverride ? { sandbox: sandboxOverride } : {}),
+    });
+    const inline = fieldEntries(union);
+    const all = inline.length ? inline : (await buildCatalog(taskId, union, sandboxOverride)).fields;
+    return all.filter((f) => f.type !== "object");
+  } catch {
+    return [];
+  }
 }
 
 export type SegmentMatch = {
@@ -666,6 +780,49 @@ export async function findExistingSegment(taskId: TaskId, terms: string[], sandb
     return { read: true, error: null, id: best?.id ?? null, name: best?.name ?? null, considered: rows.length };
   } catch (err) {
     return { read: false, error: (err as Error).message, id: null, name: null, considered: 0 };
+  }
+}
+
+/** Whitespace-insensitive form of a PQL expression, for comparing rules. Values stay case-sensitive ("Y" is not "y"). */
+export function normalizePql(pql: string): string {
+  let t = String(pql || "").replace(/\s+/g, " ").trim();
+  while (t.startsWith("(") && t.endsWith(")")) t = t.slice(1, -1).trim();
+  return t;
+}
+
+/**
+ * An existing segment whose rule is IDENTICAL to `pql` - the only safe
+ * meaning of "this audience already exists". findExistingSegment above
+ * matches on shared name words, which once reused "CB SEP-Eligible Business
+ * Prospects UKS" for "profiles with an email that are SEP eligible": a
+ * different audience that happened to share the word "SEP". A name match
+ * is shown as a similar audience; only this one skips creating.
+ */
+export async function findSegmentWithRule(
+  taskId: TaskId,
+  pql: string,
+  sandbox?: string,
+): Promise<{ id: string; name: string } | null> {
+  const target = normalizePql(pql);
+  if (!target) return null;
+  try {
+    const result = await callMcpTool<unknown>(taskId, "adobe_list_segments", {
+      limit: "200",
+      ...(sandbox ? { sandbox } : {}),
+    });
+    const rows = (Array.isArray(result) ? result : ((result as { segments?: unknown[] })?.segments || [])) as Array<
+      Record<string, unknown>
+    >;
+    for (const row of rows) {
+      const raw = row.expression;
+      const expr = typeof raw === "string" ? raw : String((raw as { value?: unknown } | null)?.value ?? "");
+      if (expr && normalizePql(expr) === target && row.id) {
+        return { id: String(row.id), name: String(row.name || row.id) };
+      }
+    }
+    return null;
+  } catch {
+    return null;
   }
 }
 
@@ -840,28 +997,33 @@ export function nightlyCutoff(now = new Date()): {
 
 export type SegmentSizeEstimate =
   | { available: true; count: number }
-  | { available: false; reason: string };
+  | {
+      available: false;
+      reason: string;
+      /**
+       * Set while AEP is still counting: the evaluation job to read back.
+       * The audience card polls /api/audience-size with these until a count
+       * (or a failure) comes back - see readSegmentSize.
+       */
+      pending?: { jobId: string; segmentId: string; sandbox: string | null };
+    };
+
+/** How long the step itself waits for a count before handing the job to the card. Evaluation jobs usually take minutes. */
+const SIZE_WAIT_MS = 20_000;
+const SIZE_POLL_MS = 5_000;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * B3: predict the audience's size, once a segment id exists (an existing
- * match or one Agent 3 just created).
+ * B3: the audience's real size, from an on-demand evaluation job.
  *
- * See this file's top docstring for the full history - this tool is
- * verified to 404 today, a gateway-side bug this app cannot fix. Re-added
- * anyway, on explicit product direction, rather than left removed forever:
- * every failure (that 404 included) is caught here and reported as
- * unavailable, never surfaced as an error and never guessed at as a zero.
- * The caller (audience-creation/route.ts) shows a plain "size available
- * after next evaluation" message when `available` is false - never an
- * error, never a zero.
- *
- * ARGUMENT SHAPE IS A BEST-EFFORT GUESS, not verified against a live call
- * the way every other tool in this file is (this one was never wired up
- * long enough to confirm it) - `segment_id` mirrors the convention
- * adobe_get_schema/adobe_create_segment use for their own id arguments. If
- * the real shape differs, the call still fails cleanly into the `available:
- * false` branch below; no run-safety property depends on getting this
- * exactly right, only the (currently unreachable) success path does.
+ * adobe_create_segment_estimate posts to /segment/definitions/{id}/estimate,
+ * which AEP answers 404 for every segment (verified again 26 Sep 2026) - it
+ * never returned a count. An evaluation job does: adobe_create_segment_job
+ * evaluates just this segment and the job's metrics carry
+ * segmentedProfileCounter[segmentId]. Jobs take a few minutes, so this waits
+ * briefly and otherwise returns `pending` with the job id for the card to
+ * poll. Never throws, never a fabricated zero: a count is only reported
+ * when the job itself reports one for this segment.
  */
 export async function estimateSegmentSize(
   taskId: TaskId,
@@ -869,24 +1031,65 @@ export async function estimateSegmentSize(
   sandbox?: string,
 ): Promise<SegmentSizeEstimate> {
   if (!segmentId) return { available: false, reason: "no segment id to estimate yet" };
-
-  const args = { segment_id: segmentId, ...(sandbox ? { sandbox } : {}) };
+  let jobId = "";
   try {
-    // Two-step, same shape as the other AEP job-style tools in this estate:
-    // create the estimate job, then read it back.
-    await callMcpTool<unknown>(taskId, "adobe_create_segment_estimate", args);
-    const result = await callMcpTool<{ count?: unknown; estimatedProfileCount?: unknown; total?: unknown }>(
+    const job = await callMcpTool<{ id?: unknown; jobId?: unknown; data?: { id?: unknown } }>(
       taskId,
-      "adobe_get_segment_estimate",
-      args,
+      "adobe_create_segment_job",
+      { segment_ids: JSON.stringify([segmentId]), ...(sandbox ? { sandbox } : {}) },
     );
-    const raw = result?.count ?? result?.estimatedProfileCount ?? result?.total;
-    const count = Number(raw);
-    if (!Number.isFinite(count) || count < 0) {
-      return { available: false, reason: "the estimate tool returned no usable count" };
-    }
-    return { available: true, count };
+    jobId = String(job?.id ?? job?.jobId ?? job?.data?.id ?? "");
   } catch (err) {
-    return { available: false, reason: (err as Error).message };
+    return { available: false, reason: `could not start an evaluation job: ${(err as Error).message}` };
+  }
+  if (!jobId) return { available: false, reason: "AEP started no evaluation job for this segment" };
+
+  const deadline = Date.now() + SIZE_WAIT_MS;
+  let last: SegmentSizeEstimate = pendingSize(jobId, segmentId, sandbox);
+  while (Date.now() < deadline) {
+    await sleep(SIZE_POLL_MS);
+    last = await readSegmentSize(taskId, jobId, segmentId, sandbox);
+    if (last.available || !last.pending) return last;
+  }
+  return last;
+}
+
+function pendingSize(jobId: string, segmentId: string, sandbox?: string): SegmentSizeEstimate {
+  return {
+    available: false,
+    reason: "AEP is counting this audience now - usually a few minutes",
+    pending: { jobId, segmentId, sandbox: sandbox ?? null },
+  };
+}
+
+/** Read an evaluation job back: a count once it has one for this segment, `pending` while it runs, a reason if it failed. */
+export async function readSegmentSize(
+  taskId: TaskId,
+  jobId: string,
+  segmentId: string,
+  sandbox?: string,
+): Promise<SegmentSizeEstimate> {
+  try {
+    const job = await callMcpTool<{
+      status?: unknown;
+      errors?: unknown;
+      metrics?: { segmentedProfileCounter?: Record<string, unknown> };
+    }>(taskId, "adobe_get_segment_job", { job_id: jobId, ...(sandbox ? { sandbox } : {}) });
+    const status = String(job?.status ?? "").toUpperCase();
+    if (status === "SUCCEEDED") {
+      const raw = job?.metrics?.segmentedProfileCounter?.[segmentId];
+      const count = Number(raw);
+      if (raw === undefined || !Number.isFinite(count) || count < 0) {
+        return { available: false, reason: "the evaluation finished but reported no count for this segment" };
+      }
+      return { available: true, count };
+    }
+    if (status === "FAILED" || status === "CANCELLED" || status === "CANCELED") {
+      const errors = Array.isArray(job?.errors) ? JSON.stringify(job.errors).slice(0, 200) : "";
+      return { available: false, reason: `the evaluation job ${status.toLowerCase()}${errors ? `: ${errors}` : ""}` };
+    }
+    return pendingSize(jobId, segmentId, sandbox);
+  } catch (err) {
+    return { available: false, reason: `could not read the evaluation job: ${(err as Error).message}` };
   }
 }

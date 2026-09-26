@@ -157,8 +157,12 @@ async function advanceOneStep(
 
     // No approval gate before the next agent — run it now, within this same
     // call, instead of stopping at "awaiting_approval". See registry.ts's
-    // requiresApproval and this file's own docstring.
-    if (!isLastStep && PIPELINE[nextStepIndex].requiresApproval === false) {
+    // requiresApproval and this file's own docstring. Demo mode has no
+    // approval step at all: it files nothing in Workfront and exists so an
+    // exec can type a request and get the audience, not stop halfway at a
+    // button that approves nothing.
+    const demo = (run.input as { mode?: unknown } | null)?.mode === "demo";
+    if (!isLastStep && (PIPELINE[nextStepIndex].requiresApproval === false || demo)) {
       const nextPriorOutputs: Partial<Record<AgentName, unknown>> = {
         ...priorOutputs,
         [agent.name]: response.output,

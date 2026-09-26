@@ -60,7 +60,12 @@ export type AepContext = {
 };
 
 /** Run all four reads for this brief, in parallel - each is independent and none writes anything. */
-export async function gatherAepContext(fields: Record<string, string>, brief?: string): Promise<AepContext> {
+export async function gatherAepContext(
+  fields: Record<string, string>,
+  brief?: string,
+  /** Demo mode's "tapdemo" - the sandbox Audience Creation will build in. Omitted in Governed mode. */
+  sandbox?: string,
+): Promise<AepContext> {
   const neededAttrs = neededAttributes(fields, brief);
   const terms = segmentSearchTerms(fields, brief);
   // What the audience is actually FOR, in plain words - the same text
@@ -68,8 +73,8 @@ export async function gatherAepContext(fields: Record<string, string>, brief?: s
   // express, not the intake-form categorization fields around it.
   const criteria = [brief, fields.audience_description].filter(Boolean).join(" ") || fields.campaign_name || "";
   const [schemaProbe, segmentMatch, datasetProbe, pqlGuidance] = await Promise.all([
-    probeSchemas("review", neededAttrs, undefined, criteria),
-    findExistingSegment("review", terms),
+    probeSchemas("review", neededAttrs, sandbox, criteria),
+    findExistingSegment("review", terms, sandbox),
     profileDatasetSummary("review"),
     groundPqlGuidance("review", criteria),
   ]);
@@ -88,9 +93,11 @@ export function formatAepContextNote(ctx: AepContext): string {
 
   if (!ctx.neededAttributes.length) {
     lines.push(
-      "- This audience's own criteria don't reference any of the attributes we can check " +
-        "(line of business, customer type, lifecycle journey, channels, region) - nothing to verify, " +
-        "nothing to open a GTO request for.",
+      ctx.schemaProbe.evidence.length
+        ? `- Fields this request names: ${ctx.schemaProbe.evidence.join(", ")}. Audience Creation matches the rest ` +
+            "of the request against the full profile field catalog."
+        : "- No standard attribute category (line of business, customer type, lifecycle, channel, region) to " +
+            "check up front - Audience Creation matches the request against the full profile field catalog.",
     );
   } else if (ctx.schemaProbe.conclusive) {
     const found = ctx.neededAttributes.filter((k) => ctx.schemaProbe.found[k]);
@@ -114,7 +121,10 @@ export function formatAepContextNote(ctx: AepContext): string {
   }
 
   if (ctx.segmentMatch.id) {
-    lines.push(`- An existing audience may already cover this: "${ctx.segmentMatch.name}" (${ctx.segmentMatch.id}).`);
+    lines.push(
+      `- A similarly named audience exists: "${ctx.segmentMatch.name}" (${ctx.segmentMatch.id}). Audience Creation ` +
+        "reuses an existing audience only when its rule is identical.",
+    );
   } else if (ctx.segmentMatch.read) {
     lines.push(`- No existing audience matched this request (${ctx.segmentMatch.considered} checked).`);
   } else {
