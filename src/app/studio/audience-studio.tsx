@@ -197,9 +197,9 @@ export function AudienceStudio() {
       <div className="ambient" aria-hidden />
 
       <header className="sticky top-0 z-20 px-4 pt-4 sm:px-6">
-        <nav className="glass mx-auto flex max-w-5xl items-center gap-3 rounded-full px-4 py-2.5 sm:px-5">
+        <nav className="glass mx-auto flex max-w-5xl items-center gap-3 rounded-2xl px-4 py-2.5 sm:px-5">
           <button onClick={() => reset()} className="flex items-center gap-2 text-label" aria-label="Audience Studio home">
-            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-accent text-white">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent text-on-accent">
               <PeopleIcon className="h-4 w-4" />
             </span>
             <span className="text-[15px] font-semibold tracking-tight">Audience Studio</span>
@@ -226,11 +226,11 @@ export function AudienceStudio() {
               aria-checked={developer}
               onClick={() => setDeveloper(!developer)}
               className={`relative h-[22px] w-[38px] rounded-full transition-colors duration-200 ${
-                developer ? "bg-success" : "bg-label-tertiary/40"
+                developer ? "bg-accent" : "bg-label-tertiary/40"
               }`}
             >
               <span
-                className={`absolute top-[2px] h-[18px] w-[18px] rounded-full bg-white shadow transition-transform duration-200 ${
+                className={`absolute left-0 top-[2px] h-[18px] w-[18px] rounded-full bg-white shadow transition-transform duration-200 ${
                   developer ? "translate-x-[18px]" : "translate-x-[2px]"
                 }`}
               />
@@ -286,8 +286,9 @@ export function AudienceStudio() {
           </section>
         ) : (
           <section className="flex flex-col gap-5 pt-10 sm:pt-14" aria-live="polite">
-            <div className="rise flex justify-end">
-              <p className="max-w-[85%] rounded-[22px] rounded-br-md bg-accent px-4 py-2.5 text-[16px] leading-snug text-white shadow-lg shadow-accent/20">
+            <div className="rise border-l-2 border-accent pl-4">
+              <p className="text-[12px] font-semibold uppercase tracking-wider text-label-tertiary">Your request</p>
+              <p className="mt-1 text-[20px] font-medium leading-snug tracking-tight text-label">
                 {(detail.run.input as { brief?: string })?.brief ?? brief}
               </p>
             </div>
@@ -323,7 +324,7 @@ export function AudienceStudio() {
               <div className="rise flex flex-wrap justify-center gap-3 pt-2">
                 <button
                   onClick={() => reset()}
-                  className="rounded-full bg-accent px-6 py-3 text-[15px] font-medium text-white shadow-lg shadow-accent/25 transition hover:bg-accent-hover active:scale-[0.98]"
+                  className="rounded-full bg-accent px-6 py-3 text-[15px] font-medium text-on-accent shadow-lg shadow-accent/25 transition hover:bg-accent-hover active:scale-[0.98]"
                 >
                   New audience
                 </button>
@@ -371,7 +372,7 @@ function Composer({
 
   return (
     <form
-      className="glass glass-strong mt-10 flex w-full max-w-2xl items-end gap-2 rounded-[30px] p-2 pl-5 text-left"
+      className="glass glass-strong mt-10 flex w-full max-w-2xl items-end gap-2 rounded-[20px] p-2 pl-5 text-left"
       onSubmit={(e) => {
         e.preventDefault();
         onSubmit();
@@ -401,7 +402,7 @@ function Composer({
         type="submit"
         disabled={disabled || !value.trim()}
         aria-label="Build audience"
-        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-accent text-white transition hover:bg-accent-hover active:scale-95 disabled:bg-label-tertiary/30 disabled:text-white/80"
+        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-accent text-on-accent transition hover:bg-accent-hover active:scale-95 disabled:bg-label-tertiary/30 disabled:text-on-accent/80"
       >
         <ArrowUpIcon className="h-5 w-5" />
       </button>
@@ -451,7 +452,7 @@ function DeveloperOptions({
 
 function WorkingCard({ stage, stuck, onRetry }: { stage: number; stuck: boolean; onRetry: () => void }) {
   return (
-    <div className="glass rise rounded-[28px] p-6 sm:p-7">
+    <div className="glass rise rounded-[22px] p-6 sm:p-7">
       <ol className="flex flex-col gap-4">
         {STAGES.map((label, i) => {
           const state = i < stage ? "done" : i === stage ? "active" : "todo";
@@ -483,7 +484,7 @@ function WorkingCard({ stage, stuck, onRetry }: { stage: number; stuck: boolean;
       {stuck ? (
         <div className="mt-5 flex items-center justify-between gap-3 border-t border-separator pt-4">
           <p className="text-[14px] text-label-secondary">This is taking longer than usual.</p>
-          <button onClick={onRetry} className="rounded-full bg-accent px-4 py-1.5 text-[14px] font-medium text-white">
+          <button onClick={onRetry} className="rounded-full bg-accent px-4 py-1.5 text-[14px] font-medium text-on-accent">
             Try again
           </button>
         </div>
@@ -510,7 +511,7 @@ function QuestionCard({
 
   return (
     <form
-      className="glass rise rounded-[28px] p-6 sm:p-7"
+      className="glass rise rounded-[22px] p-6 sm:p-7"
       onSubmit={(e) => {
         e.preventDefault();
         if (ready && !busy) onSubmit(answers);
@@ -555,7 +556,7 @@ function QuestionCard({
         <button
           type="submit"
           disabled={!ready || busy}
-          className="rounded-full bg-accent px-5 py-2.5 text-[15px] font-medium text-white transition hover:bg-accent-hover disabled:opacity-40"
+          className="rounded-full bg-accent px-5 py-2.5 text-[15px] font-medium text-on-accent transition hover:bg-accent-hover disabled:opacity-40"
         >
           Continue
         </button>
@@ -576,7 +577,7 @@ function QuestionCard({
 
 function ApprovalCard({ next, busy, onApprove }: { next: string; busy: boolean; onApprove: () => void }) {
   return (
-    <div className="glass rise flex flex-wrap items-center justify-between gap-4 rounded-[28px] p-6 sm:p-7">
+    <div className="glass rise flex flex-wrap items-center justify-between gap-4 rounded-[22px] p-6 sm:p-7">
       <div>
         <h2 className="text-[20px] font-semibold tracking-tight text-label">Ready for your go-ahead</h2>
         <p className="mt-1 text-[15px] text-label-secondary">Next: {next.toLowerCase()}.</p>
@@ -584,7 +585,7 @@ function ApprovalCard({ next, busy, onApprove }: { next: string; busy: boolean; 
       <button
         onClick={onApprove}
         disabled={busy}
-        className="rounded-full bg-accent px-5 py-2.5 text-[15px] font-medium text-white transition hover:bg-accent-hover disabled:opacity-40"
+        className="rounded-full bg-accent px-5 py-2.5 text-[15px] font-medium text-on-accent transition hover:bg-accent-hover disabled:opacity-40"
       >
         Approve
       </button>
@@ -640,7 +641,7 @@ function SuccessCard({ audience, developer }: { audience: AudienceSummary; devel
   }
 
   return (
-    <article className="glass glass-strong rise rounded-[32px] p-6 sm:p-8">
+    <article className="glass glass-strong rise rounded-3xl p-6 sm:p-8">
       <div className="flex items-center gap-3">
         <span className="flex h-9 w-9 items-center justify-center rounded-full bg-success text-white shadow-lg shadow-success/30">
           <CheckIcon draw className="h-5 w-5" />
@@ -725,7 +726,7 @@ function NoticeCard({
   rule?: string | null;
 }) {
   return (
-    <div className="glass rise rounded-[28px] p-6 sm:p-7">
+    <div className="glass rise rounded-[22px] p-6 sm:p-7">
       <div className="flex items-center gap-3">
         <span
           className={`flex h-8 w-8 items-center justify-center rounded-full ${

@@ -1,21 +1,23 @@
 @import "tailwindcss";
 
 /*
- * Design tokens. Colors follow Apple's system palette (label, secondary
- * label, systemBlue, systemGreen...) in both appearances, so the studio
- * reads as native on Apple hardware and calm everywhere else.
+ * Design tokens. Apple's principles - a small set of semantic colors with a
+ * clear hierarchy, one accent, both appearances - but the studio's own
+ * palette: cool slate neutrals and a deep teal accent, so it reads as a
+ * business tool rather than an Apple app.
  */
 :root {
-  --background: #f5f5f7;
-  --foreground: #1d1d1f;
+  --background: #f3f5f8;
+  --foreground: #0f172a;
 
-  --label: #1d1d1f;
-  --label-secondary: rgba(60, 60, 67, 0.72);
-  --label-tertiary: rgba(60, 60, 67, 0.45);
-  --separator: rgba(60, 60, 67, 0.14);
-  --accent: #0071e3;
-  --accent-hover: #0077ed;
-  --success: #248a3d;
+  --label: #0f172a;
+  --label-secondary: rgba(15, 23, 42, 0.68);
+  --label-tertiary: rgba(15, 23, 42, 0.44);
+  --separator: rgba(15, 23, 42, 0.1);
+  --accent: #0e7490;
+  --accent-hover: #0b5f77;
+  --on-accent: #ffffff;
+  --success: #15803d;
   --success-fill: rgba(52, 199, 89, 0.14);
   --warning: #b25000;
   --warning-fill: rgba(255, 149, 0, 0.14);
@@ -29,38 +31,39 @@
   --glass-shadow: 0 24px 64px -24px rgba(15, 23, 42, 0.28), 0 2px 8px rgba(15, 23, 42, 0.06);
   --glass-highlight: linear-gradient(180deg, rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0) 42%);
 
-  --ambient-1: rgba(0, 113, 227, 0.2);
-  --ambient-2: rgba(94, 92, 230, 0.16);
-  --ambient-3: rgba(48, 176, 199, 0.16);
+  --ambient-1: rgba(14, 116, 144, 0.2);
+  --ambient-2: rgba(67, 56, 202, 0.12);
+  --ambient-3: rgba(20, 184, 166, 0.14);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #000000;
-    --foreground: #f5f5f7;
+    --background: #060a10;
+    --foreground: #e6ebf2;
 
-    --label: #f5f5f7;
-    --label-secondary: rgba(235, 235, 245, 0.68);
-    --label-tertiary: rgba(235, 235, 245, 0.4);
-    --separator: rgba(84, 84, 88, 0.55);
-    --accent: #0a84ff;
-    --accent-hover: #409cff;
-    --success: #30d158;
+    --label: #e6ebf2;
+    --label-secondary: rgba(226, 232, 240, 0.7);
+    --label-tertiary: rgba(226, 232, 240, 0.42);
+    --separator: rgba(148, 163, 184, 0.18);
+    --accent: #2cc4dc;
+    --accent-hover: #5dd6e8;
+    --on-accent: #04161b;
+    --success: #16a34a;
     --success-fill: rgba(48, 209, 88, 0.16);
     --warning: #ff9f0a;
     --warning-fill: rgba(255, 159, 10, 0.16);
     --danger: #ff453a;
 
-    --glass-fill: rgba(44, 44, 46, 0.5);
-    --glass-fill-strong: rgba(44, 44, 46, 0.72);
+    --glass-fill: rgba(22, 30, 42, 0.52);
+    --glass-fill-strong: rgba(22, 30, 42, 0.74);
     --glass-edge: rgba(255, 255, 255, 0.16);
     --glass-stroke: rgba(255, 255, 255, 0.08);
     --glass-shadow: 0 24px 64px -24px rgba(0, 0, 0, 0.7), 0 2px 8px rgba(0, 0, 0, 0.4);
     --glass-highlight: linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0) 40%);
 
-    --ambient-1: rgba(10, 132, 255, 0.28);
-    --ambient-2: rgba(94, 92, 230, 0.24);
-    --ambient-3: rgba(100, 210, 255, 0.14);
+    --ambient-1: rgba(44, 196, 220, 0.2);
+    --ambient-2: rgba(79, 70, 229, 0.2);
+    --ambient-3: rgba(20, 184, 166, 0.12);
   }
 }
 
@@ -73,14 +76,14 @@
   --color-separator: var(--separator);
   --color-accent: var(--accent);
   --color-accent-hover: var(--accent-hover);
+  --color-on-accent: var(--on-accent);
   --color-success: var(--success);
   --color-success-fill: var(--success-fill);
   --color-warning: var(--warning);
   --color-warning-fill: var(--warning-fill);
   --color-danger: var(--danger);
-  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", var(--font-inter), "Helvetica Neue",
-    Arial, sans-serif;
-  --font-mono: ui-monospace, "SF Mono", var(--font-geist-mono), Menlo, monospace;
+  --font-sans: var(--font-jakarta), "Helvetica Neue", Arial, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, Menlo, monospace;
 }
 
 body {

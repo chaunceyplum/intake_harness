@@ -34,7 +34,7 @@ export function DeveloperPanel({
   if (!detail && !error) return null;
 
   return (
-    <section className="glass rise mt-6 rounded-[28px] p-5 text-sm" aria-label="Developer details">
+    <section className="glass rise mt-6 rounded-[22px] p-5 text-sm" aria-label="Developer details">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <h2 className="text-[13px] font-semibold uppercase tracking-wide text-label-secondary">Behind the scenes</h2>
         {detail && (
