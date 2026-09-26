@@ -246,7 +246,7 @@ export function AudienceStudio() {
               <SparkleIcon className="h-4 w-4" /> Comcast Business audiences, built in Adobe Experience Platform
             </p>
             <h1 className="text-[40px] font-semibold leading-[1.08] tracking-tight text-label sm:text-[56px]">
-              What audience
+              What <span className="accent-text">audience</span>
               <br />
               do you need?
             </h1>
