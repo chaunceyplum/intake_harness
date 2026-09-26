@@ -65,8 +65,10 @@ export async function gatherAepContext(
   brief?: string,
   /** Demo mode's "tapdemo" - the sandbox Audience Creation will build in. Omitted in Governed mode. */
   sandbox?: string,
+  /** Conditions the marketer already settled at Intake (filterAnswers keys) - not needed any more. */
+  settled: string[] = [],
 ): Promise<AepContext> {
-  const neededAttrs = neededAttributes(fields, brief);
+  const neededAttrs = neededAttributes(fields, brief).filter((k) => !settled.includes(k));
   const terms = segmentSearchTerms(fields, brief);
   // What the audience is actually FOR, in plain words - the same text
   // neededAttributes reads, since that's the criteria PQL would need to

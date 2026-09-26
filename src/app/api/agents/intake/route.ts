@@ -4,7 +4,12 @@ import type { AgentRequest, AgentResponse } from "@/lib/pipeline/types";
 import type { ParsedIntake } from "@/lib/agents/intake/parse";
 import { extractIntake } from "@/lib/agents/intake/llm-extract";
 import { createIntakeRequest, demoIntakeOutcome, toWorkfrontPayload } from "@/lib/agents/intake/workfront";
-import { findUnmappableFilter, type UnmappableFilter } from "@/lib/agents/intake/buildability";
+import {
+  FILTER_ANSWER_PREFIX,
+  findUnmappableFilter,
+  readFilterAnswers,
+  type UnmappableFilter,
+} from "@/lib/agents/intake/buildability";
 
 /**
  * Agent 1 - Intake. B1, at step 1.2a.
@@ -178,7 +183,14 @@ async function handlePost(req: NextRequest) {
     // leaves the sandbox unset, same as every other AEP call in this app
     // today. See buildability.ts / aep.ts's probeSchemas.
     const sandbox = mode === "demo" ? "tapdemo" : undefined;
-    const unmappable: UnmappableFilter | null = await findUnmappableFilter(parsed.fields, brief, "intake", sandbox);
+    // Filters the marketer already answered ("drop it", or a field to use)
+    // are settled: not asked again, and handed on as `filterAnswers` for
+    // Agent 3 to apply. The brief still names them every round, so without
+    // this the same question came back until the loop limit.
+    const filterAnswers = readFilterAnswers(body.input?.fields);
+    const unmappable: UnmappableFilter | null = await findUnmappableFilter(
+      parsed.fields, brief, "intake", sandbox, Object.keys(filterAnswers),
+    );
     const grounding = await groundQuestion(unmappable?.label ?? null);
 
     // Which extraction path actually ran (llm vs deterministic), the model,
@@ -211,6 +223,7 @@ async function handlePost(req: NextRequest) {
           ...summarise(parsed),
           loopCount,
           mode,
+          filterAnswers,
           grounding: { grounded: grounding.grounded, reason: grounding.reason },
         },
         metadata: { loopCount, loopLimitReached: true, mode, ...extractionMeta },
@@ -227,6 +240,13 @@ async function handlePost(req: NextRequest) {
         output: {
           brief,
           ...summarise(parsed),
+          // Earlier filter answers ride along in `fields` (the resume route
+          // merges this round's answer into it), so a second unmappable
+          // filter never costs the first one's answer.
+          fields: {
+            ...parsed.fields,
+            ...Object.fromEntries(Object.entries(filterAnswers).map(([k, v]) => [`${FILTER_ANSWER_PREFIX}${k}`, v])),
+          },
           // The next round arrives with this incremented and the fields so
           // far, so the marketer answers one specific question, not the
           // whole form.
@@ -277,6 +297,9 @@ async function handlePost(req: NextRequest) {
         ...summarise(parsed),
         loopCount,
         mode,
+        // Carried through Review's `...input` spread to Agent 3, which drops
+        // or remaps these conditions when it writes the rule.
+        filterAnswers,
         // Marketer-facing label for the audience card - null in Governed
         // mode, where the existing Awaiting approval / Approved language
         // already applies.

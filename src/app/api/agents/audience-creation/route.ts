@@ -25,6 +25,7 @@ import {
   type SegmentCreation,
 } from "@/lib/agents/audience/pql-synth";
 import type { AepContext } from "@/lib/agents/review/aep-context";
+import { filterAnswerNotes } from "@/lib/agents/intake/buildability";
 import type { SchemaProbe, SegmentMatch } from "@/lib/agents/audience/aep";
 import {
   findOpenRequest,
@@ -287,6 +288,9 @@ async function handlePost(req: NextRequest) {
   // `...input` spread) - every other value, including absent, is "governed",
   // today's unchanged default. See this file's docstring.
   const mode: "demo" | "governed" = input.mode === "demo" ? "demo" : "governed";
+  // Intake's settled filters, threaded through Review's `...input` spread.
+  const filterAnswers: Record<string, string> =
+    input.filterAnswers && typeof input.filterAnswers === "object" ? (input.filterAnswers as Record<string, string>) : {};
   const sandbox = mode === "demo" ? "tapdemo" : undefined;
 
   // Every read below (probeSchemas, findExistingSegment) calls MCP tools -
@@ -302,8 +306,12 @@ async function handlePost(req: NextRequest) {
   const priorReview = (body.priorOutputs?.review as { aepContext?: AepContext } | undefined)?.aepContext;
 
   const { result, toolCalls } = await withToolCallLog(body.runId, "audience_creation", async (): Promise<AgentResponse<AudienceCreationOutput>> => {
-    const needed = neededAttributes(fields, brief);
+    // Conditions the marketer settled at Intake's "no field matches this"
+    // question: no longer needed from the schema, and their answers go to
+    // PQL synthesis as instructions (drop it / use this field instead).
+    const needed = neededAttributes(fields, brief).filter((k) => !(k in filterAnswers));
     const criteria = [brief, fields.audience_description].filter(Boolean).join(" ") || fields.campaign_name || "";
+    const synthCriteria = [criteria, filterAnswerNotes(filterAnswers)].filter(Boolean).join("\n");
 
     // Reuse Review's probe only when it is conclusive AND covers exactly the
     // attributes this audience needs (Review derives `needed` from the same
@@ -376,7 +384,7 @@ async function handlePost(req: NextRequest) {
         : [];
     let pqlSynthesis: PqlSynthesis | null =
       path.buildPath === "aep_rule_builder" && pqlGuidance
-        ? await synthesizePql(criteria, probe, pqlGuidance, undefined, { catalog })
+        ? await synthesizePql(synthCriteria, probe, pqlGuidance, undefined, { catalog })
         : null;
 
     // "Already exists" means an existing segment with the IDENTICAL rule -
@@ -399,7 +407,7 @@ async function handlePost(req: NextRequest) {
         body.runId, "audience_creation", pqlSynthesis, audienceName(pqlSynthesis, fields, body.runId, mode), sandbox,
       );
       if (segmentCreation.attempted && !segmentCreation.created && !isMissingWriteTool(segmentCreation.reason) && pqlGuidance) {
-        const retry = await synthesizePql(criteria, probe, pqlGuidance, undefined, {
+        const retry = await synthesizePql(synthCriteria, probe, pqlGuidance, undefined, {
           catalog,
           feedback: `${segmentCreation.reason} (rejected rule: ${pqlSynthesis.pql})`,
         });

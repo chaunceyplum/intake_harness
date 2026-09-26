@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const callMcpToolMock = vi.fn();
 vi.mock("@/lib/mcp-client", () => ({ callMcpTool: (...args: unknown[]) => callMcpToolMock(...args) }));
 
-const { findUnmappableFilter } = await import("./buildability");
+const { findUnmappableFilter, readFilterAnswers, filterAnswerNotes } = await import("./buildability");
 
 beforeEach(() => {
   callMcpToolMock.mockReset();
@@ -46,7 +46,7 @@ describe("findUnmappableFilter - Intake's only remaining reason to pause", () =>
       "intake",
     );
     expect(result).not.toBeNull();
-    expect(result?.key).toBe("identity");
+    expect(result?.key).toBe("filter:identity");
     expect(result?.ask).toMatch(/identity attribute/);
     // Exactly one question - never a batch of them.
     expect(result).not.toBeNull();
@@ -71,5 +71,26 @@ describe("findUnmappableFilter - Intake's only remaining reason to pause", () =>
       "adobe_get_union_schema",
       expect.objectContaining({ sandbox: "tapdemo" }),
     );
+  });
+});
+
+describe("answered filters - settled, never asked again", () => {
+  it("skips a filter the marketer already answered, with zero MCP calls when nothing else is needed", async () => {
+    const result = await findUnmappableFilter({}, "Audience where ECID exists.", "intake", undefined, ["identity"]);
+    expect(result).toBeNull();
+    expect(callMcpToolMock).not.toHaveBeenCalled();
+  });
+
+  it("reads only prefixed, non-blank answers out of the carried fields", () => {
+    expect(
+      readFilterAnswers({ "filter:region": " drop it ", "filter:identity": "  ", region: "Northeast", campaign_name: "X" }),
+    ).toEqual({ region: "drop it" });
+  });
+
+  it("turns answers into instructions PQL synthesis can apply", () => {
+    const notes = filterAnswerNotes({ region: "drop it" });
+    expect(notes).toMatch(/region or market/);
+    expect(notes).toMatch(/"drop it"/);
+    expect(filterAnswerNotes({})).toBe("");
   });
 });

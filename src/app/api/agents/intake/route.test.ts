@@ -74,8 +74,32 @@ describe("unmappable filter - pauses with exactly one specific question", () => 
 
     expect(body.status).toBe("needs_input");
     expect(body.output.questions).toHaveLength(1);
-    expect(body.output.questions[0].key).toBe("identity");
+    expect(body.output.questions[0].key).toBe("filter:identity");
     expect(body.message).toMatch(/identity attribute/);
+  });
+
+  it("does not ask again once the marketer answered it, and hands the answer on", async () => {
+    // Same brief, same schema with no matching field - but this round
+    // arrives carrying the answer to last round's question. It used to be
+    // asked again every round until the loop limit.
+    callMcpTool.mockResolvedValue({
+      $id: "https://ns.adobe.com/tapdemo/schemas/union",
+      title: "Union",
+      properties: { someUnrelatedField: { type: "string" } },
+    });
+
+    const res = await POST(
+      postRequest({
+        brief: "Audience where ECID exists.",
+        mode: "demo",
+        loopCount: 1,
+        fields: { "filter:identity": "drop that condition" },
+      }),
+    );
+    const body = await res.json();
+
+    expect(body.status).toBe("completed");
+    expect(body.output.filterAnswers).toEqual({ identity: "drop that condition" });
   });
 });
 

@@ -7,8 +7,14 @@ import { StatusBadge } from "../status-badge";
 import { ToolCallTrace, type ToolCallOutput } from "../tool-call-trace";
 import { ToolCallLog, type ToolCallLogEntry } from "../tool-call-log";
 import { LiveToolCallLog, type LiveToolCall } from "../live-tool-call-log";
+import { AudienceCard, DemoPill } from "../audience-card";
 
 type RunDetail = { run: RunRow; taskRuns: TaskRunRow[] };
+
+/** Demo runs (input.mode "demo") build in tapdemo and file nothing in Workfront - see pipeline-chat.tsx's toggle. */
+function isDemo(run: RunRow): boolean {
+  return (run.input as { mode?: unknown } | null)?.mode === "demo";
+}
 
 /** Falls back to the raw task_id for a historical "escalation" row or the live poll's currentTaskId. */
 function agentLabel(taskId: string): string {
@@ -399,6 +405,7 @@ export function RunsBrowser({ initialRunId }: { initialRunId?: string }) {
                   <div className="flex items-center gap-2">
                     <StatusBadge status={run.status} />
                     {run.approved && <span title="Approved">✓</span>}
+                    {isDemo(run) && <DemoPill text="Demo" />}
                     <span className="text-zinc-400">{new Date(run.created_at).toLocaleString()}</span>
                   </div>
                 </button>
@@ -414,6 +421,7 @@ export function RunsBrowser({ initialRunId }: { initialRunId?: string }) {
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-mono text-xs text-zinc-500">run_id: {detail.run.run_id}</span>
                 <StatusBadge status={detail.run.status} />
+                {isDemo(detail.run) && <DemoPill text="Demo – not approved" />}
                 {detail.run.approved && (
                   <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800 dark:bg-blue-950 dark:text-blue-400">
                     Approved by {detail.run.approved_by}
@@ -595,6 +603,9 @@ export function RunsBrowser({ initialRunId }: { initialRunId?: string }) {
                     )}
                     <div className="flex flex-col gap-1.5">
                       <ToolCallTrace output={(taskRun.output ?? {}) as ToolCallOutput} metadata={taskRun.metadata} />
+                      {taskRun.task_id === "audience_creation" && (
+                        <AudienceCard output={taskRun.output} metadata={taskRun.metadata} />
+                      )}
                     </div>
                     <ToolCallLog calls={(taskRun.metadata?.toolCalls as ToolCallLogEntry[] | undefined) ?? []} />
                     <pre className="overflow-x-auto rounded bg-zinc-50 p-2 text-xs dark:bg-zinc-900">
