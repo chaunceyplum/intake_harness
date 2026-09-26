@@ -25,11 +25,14 @@ export const BUSINESS_CONTEXT: string[] = [
     "the number of employees) and product flags live on the profile itself, so \"companies/businesses with ...\" " +
     "selects profiles whose attributes match - it is not a separate entity.",
   "An unqualified product word means the Comcast Business product: \"mobile\" is CBM, \"internet\" is CB Internet.",
-  "Having or being a member of a product is its Y/N flag = \"Y\"; not having it is = \"N\"; being eligible for " +
-    "it is its eligibility flag.",
-  "\"Valid email\" / \"emailable\" is the Valid email address flag = \"Y\"; an invalid email is that flag = \"N\". " +
-    "\"People we can contact / email\" also excludes Do not contact = \"Y\". Exclusions of a flag are " +
-    "!= \"Y\" so unflagged profiles stay in.",
+  "Y/N flags: what the marketer asks for is = \"Y\" (\"has SEP\" -> hasSEP = \"Y\"); its opposite is = \"N\" " +
+    "(\"doesn't have SEP\" -> hasSEP = \"N\"; \"email is not valid\" / \"invalid email\" -> validEmailFlag = \"N\"). " +
+    "Being eligible for a product is its eligibility flag.",
+  "Only when EXCLUDING people who carry a flag (\"excluding do not contact\", \"not on the do-not-contact list\") " +
+    "write != \"Y\" (doNotContact != \"Y\"), so profiles with no value stay in. Never write != \"N\" - it selects " +
+    "the opposite of a \"not ...\" request.",
+  "\"Valid email\" / \"emailable\" is validEmailFlag = \"Y\". \"People we can contact / email\" also means " +
+    "doNotContact != \"Y\".",
 ];
 
 /** The glossary and context as one prompt section. */
