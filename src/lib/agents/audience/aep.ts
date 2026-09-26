@@ -63,7 +63,9 @@ export const ATTRIBUTE_CUES: Record<string, RegExp> = {
   line_of_business: /(^|[^a-z])(lineofbusiness|line_of_business|lob|businessunit|business_unit)([^a-z]|$)/i,
   customer_type: /(^|[^a-z])(customertype|customer_type|subscriberstatus|subscriber_status|accountstatus|account_status)([^a-z]|$)/i,
   lifecycle_journey: /(^|[^a-z])(lifecycle|lifecyclestage|lifecycle_stage|journeystage|journey_stage)([^a-z]|$)/i,
-  channels: /(^|[^a-z])(channel|emailaddress|email_address|phonenumber|phone_number|mobilephone)([^a-z]|$)/i,
+  // "email address" in prose, and customerEmail/personalEmail as the leaf
+  // field names this tenant actually uses - a bare "email" still does not trip it.
+  channels: /(^|[^a-z])(channel|emailaddress|email_address|email\s+address|customeremail|personalemail|phonenumber|phone_number|mobilephone)([^a-z]|$)/i,
   region: /(^|[^a-z])(region|state|market|geo|postalcode|postal_code)([^a-z]|$)/i,
   // ECID/identity presence - distinct from "channels", which is about WHICH
   // channel to send on, not whether an identity attribute exists on the

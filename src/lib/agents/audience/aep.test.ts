@@ -50,6 +50,12 @@ describe("ATTRIBUTE_CUES word-boundary anchoring", () => {
     expect(ATTRIBUTE_CUES.channels.test("send this via email")).toBe(false);
     expect(ATTRIBUTE_CUES.channels.test("emailAddress != null")).toBe(true);
   });
+
+  it("channels cue reads \"email address\" in prose and this tenant's customerEmail/personalEmail fields", () => {
+    expect(neededAttributes({}, "profiles with an email address and are SEP eligible")).toContain("channels");
+    expect(ATTRIBUTE_CUES.channels.test("customerEmail")).toBe(true);
+    expect(ATTRIBUTE_CUES.channels.test("personalEmail")).toBe(true);
+  });
 });
 
 describe("criteriaKeywords", () => {

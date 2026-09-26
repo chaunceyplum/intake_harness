@@ -211,7 +211,7 @@ async function handlePost(req: NextRequest) {
           output: {
             ...input,
             reviewed: true,
-            mode: "preflight",
+            reviewMode: "preflight",
             rejection: { present: false, checked: fetched.source, couldNotRead: fetched.error },
             triage: pre,
             intakeFields: pre.redraft,
@@ -254,7 +254,7 @@ async function handlePost(req: NextRequest) {
         output: {
           ...input,
           reviewed: true,
-          mode: "preflight",
+          reviewMode: "preflight",
           rejection: { present: false, checked: fetched.source, couldNotRead: fetched.error },
           triage: pre,
           intakeFields: pre.redraft,
@@ -342,7 +342,7 @@ async function handlePost(req: NextRequest) {
         output: {
           ...input,
           reviewed: true,
-          mode: "triage",
+          reviewMode: "triage",
           rejection: { present: true, reason, checked: fetched.source, couldNotRead: fetched.error },
           triage,
           intakeFields: triage.redraft,
@@ -381,7 +381,7 @@ async function handlePost(req: NextRequest) {
       output: {
         ...input,
         reviewed: true,
-        mode: "triage",
+        reviewMode: "triage",
         rejection: { present: true, reason, checked: fetched.source, couldNotRead: fetched.error },
         triage,
         intakeFields: triage.redraft,

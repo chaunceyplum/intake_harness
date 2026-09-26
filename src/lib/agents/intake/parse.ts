@@ -188,7 +188,12 @@ function findLaunchDate(brief: string): ExtractedField | null {
   }
 
   // A bare month, on a word boundary. "end of October" / "by November".
-  const bare = text.match(new RegExp(`\\b(?:(end|late|early|mid)\\s+(?:of\\s+)?)?(${MONTH_PATTERN})\\b`, "i"));
+  // Skips an all-caps abbreviation - "SEP eligible" is Special Enrollment
+  // Period, not September - and lowercase "may", which is almost always the
+  // verb ("customers who may churn").
+  const bare = [...text.matchAll(new RegExp(`\\b(?:(end|late|early|mid)\\s+(?:of\\s+)?)?(${MONTH_PATTERN})\\b`, "gi"))].find(
+    (m) => !/^[A-Z]{3,4}$/.test(m[2]) && m[2] !== "may",
+  );
   if (!bare) return null;
   const full = MONTHS.find((m) => m.startsWith(bare[2].slice(0, 3).toLowerCase()));
   if (!full) return null;

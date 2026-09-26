@@ -86,3 +86,20 @@ describe("the audience-completeness field set - a regression guard on what's act
     expect(keys).not.toContain("email_count");
   });
 });
+
+describe("launch_date - an acronym is not a month", () => {
+  it("does not read \"SEP eligible\" as September", () => {
+    const parsed = parseBrief("Create an audience of profiles with an email address and are SEP eligible");
+    expect(parsed.fields.launch_date).toBeUndefined();
+  });
+
+  it("does not read the verb \"may\" as May", () => {
+    const parsed = parseBrief("Customers who may churn, launching end of October");
+    expect(parsed.fields.launch_date).toBe("End of October");
+  });
+
+  it("still reads a bare month and an abbreviated date", () => {
+    expect(parseBrief("launch in September").fields.launch_date).toBe("September");
+    expect(parseBrief("in market Sep 5").fields.launch_date).toBe("5 September");
+  });
+});
