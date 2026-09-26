@@ -218,8 +218,12 @@ export async function synthesizePql(
     [
       `Audience criteria: ${criteria.trim()}`,
       "",
-      `Available profile fields - full PQL paths with XDM type (use ONLY these): ${presentNames
-        .map((n) => (probe.fieldTypes?.[n] ? `${n} (${probe.fieldTypes[n]})` : n))
+      `Available profile fields - full PQL paths with XDM type and the schema's description, which is the only ` +
+        `source for a string flag's values (use ONLY these fields): ${presentNames
+        .map((n) => {
+          const about = [probe.fieldTypes?.[n], probe.fieldDescriptions?.[n]].filter(Boolean).join(" - ");
+          return about ? `${n} (${about})` : n;
+        })
         .join(", ")}`,
       "",
       "PQL function reference (use ONLY this syntax):",

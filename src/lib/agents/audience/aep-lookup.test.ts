@@ -16,7 +16,7 @@ const UNION = {
 const GROUPS: Record<string, unknown> = {
   "https://ns.adobe.com/taplondonptrsd/mixins/eligibility": {
     definitions: { customFields: { properties: { _taplondonptrsd: { type: "object", properties: {
-      SEPeligible: { type: "boolean", "meta:xdmType": "boolean" },
+      SEPeligible: { type: "string", "meta:xdmType": "string", title: "SEP eligible", description: "Y/N flag" },
     } } } } },
   },
   "https://ns.adobe.com/taplondonptrsd/mixins/holdings": {
@@ -42,8 +42,8 @@ beforeEach(() => {
 describe("fieldEntries", () => {
   it("returns full PQL paths and types, without definitions/customFields wrappers", () => {
     expect(fieldEntries(GROUPS["https://ns.adobe.com/taplondonptrsd/mixins/eligibility"])).toEqual([
-      { path: "_taplondonptrsd", type: "object" },
-      { path: "_taplondonptrsd.SEPeligible", type: "boolean" },
+      { path: "_taplondonptrsd", type: "object", description: null },
+      { path: "_taplondonptrsd.SEPeligible", type: "string", description: "Y/N flag" },
     ]);
   });
 });
@@ -75,7 +75,8 @@ describe("probeSchemas against a $ref-only union view", () => {
     expect(probe.conclusive).toBe(true);
     expect(probe.found.channels).toBe(true);
     expect(probe.evidence).toEqual(["_taplondonptrsd.customerEmail", "_taplondonptrsd.SEPeligible"]);
-    expect(probe.fieldTypes?.["_taplondonptrsd.SEPeligible"]).toBe("boolean");
+    expect(probe.fieldTypes?.["_taplondonptrsd.SEPeligible"]).toBe("string");
+    expect(probe.fieldDescriptions?.["_taplondonptrsd.SEPeligible"]).toBe("Y/N flag");
     const groupCalls = callMcpToolMock.mock.calls.filter((c) => c[1] === "adobe_get_field_group");
     expect(groupCalls.every((c) => c[2].sandbox === "tapdemo")).toBe(true);
   });

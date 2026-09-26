@@ -249,6 +249,12 @@ export type SchemaProbe = {
   evidence: string[];
   /** XDM type of each evidence path, so PQL compares a boolean to true rather than "true". */
   fieldTypes?: Record<string, string | null>;
+  /**
+   * The schema's own description of each evidence path, when it has one. A
+   * string flag's values live only here - tapdemo's SEPeligible is a string
+   * described "Y/N flag", and without that PQL can only guess "true".
+   */
+  fieldDescriptions?: Record<string, string>;
 };
 
 /** Titles and ids from the schema list. */
@@ -270,8 +276,8 @@ function schemaRecords(result: unknown): Array<{ title: string; id: string }> {
 }
 
 /** Every property name in a schema (or field group) document, however deeply nested. */
-/** A profile field as PQL addresses it: full dotted path plus its XDM type. */
-export type ProfileField = { path: string; type: string | null };
+/** A profile field as PQL addresses it: full dotted path, XDM type, and the schema's own description of it. */
+export type ProfileField = { path: string; type: string | null; description?: string | null };
 
 /**
  * Every field under a schema/field-group document, with its full dotted path
@@ -291,7 +297,13 @@ export function fieldEntries(schema: unknown): ProfileField[] {
       for (const [key, child] of Object.entries(props as Record<string, unknown>)) {
         const path = prefix ? `${prefix}.${key}` : key;
         const c = (child && typeof child === "object" ? child : {}) as Record<string, unknown>;
-        if (!out.has(path)) out.set(path, { path, type: String(c["meta:xdmType"] ?? c.type ?? "") || null });
+        if (!out.has(path)) {
+          out.set(path, {
+            path,
+            type: String(c["meta:xdmType"] ?? c.type ?? "") || null,
+            description: String(c.description ?? "").trim() || null,
+          });
+        }
         walk(child, path, depth + 1);
       }
     }
@@ -526,11 +538,13 @@ export async function probeSchemas(
   const found: Record<string, boolean> = {};
   const evidence: string[] = [];
   const fieldTypes: Record<string, string | null> = {};
+  const fieldDescriptions: Record<string, string> = {};
   if (conclusive) {
     const all = [...profileFields.values()];
     const cite = (f: ProfileField) => {
       if (!(f.path in fieldTypes)) evidence.push(f.path);
       fieldTypes[f.path] = f.type;
+      if (f.description) fieldDescriptions[f.path] = f.description;
     };
     for (const key of needed) {
       const cue = ATTRIBUTE_CUES[key];
@@ -566,6 +580,7 @@ export async function probeSchemas(
     found,
     evidence: evidence.slice(0, 20),
     fieldTypes,
+    fieldDescriptions,
   };
 }
 
