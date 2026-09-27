@@ -75,7 +75,8 @@ def run_case(case):
 if __name__ == "__main__":
     only = set(sys.argv[1:])
     cases = [c for c in CASES if not only or c[0] in only]
-    with ThreadPoolExecutor(4) as ex:
+    # One at a time by default: cheaper to stop early, and parallel cold-cache runs once overloaded the gateway.
+    with ThreadPoolExecutor(max(1, min(4, int(os.environ.get("EVAL_WORKERS", "1"))))) as ex:
         results = list(ex.map(run_case, cases))
     for r in results:
         mark = "PASS" if r.get("pass") else "FAIL"
