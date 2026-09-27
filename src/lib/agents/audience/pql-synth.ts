@@ -377,7 +377,7 @@ export async function synthesizePql(
       "",
       'Respond with JSON: { "pql": "the expression, or empty string if not expressible", "fieldsUsed": ["field", ...], ' +
         '"missing": ["what you would need but was not available", ...], "interpretation": "one plain-English sentence ' +
-        'saying exactly who is in the audience, naming the fields by title", "name": "a short audience name, max 60 characters" }',
+        'saying exactly who is in the audience, naming the fields by title", "name": "who the audience is in 2-6 words, Title Case, in the business\'s own terms (e.g. SEP Eligible Without SEP; CB Internet, No CBM, Emailable) - no dates, IDs, the word Demo or a CB prefix; those are added" }',
       ...(opts.feedback ? ["", `AEP rejected the previous rule for this audience: ${opts.feedback}. Write a corrected rule.`] : []),
       ...(extra ? ["", extra] : []),
     ].join("\n");

@@ -1,5 +1,6 @@
 import type { RunRow, TaskRunRow } from "@/lib/pipeline/types";
 import type { SegmentSizeEstimate } from "@/lib/agents/audience/aep";
+import { parseStructuredName } from "@/lib/agents/audience/naming";
 
 /**
  * What the executive-facing Audience Studio shows for a run, derived from the
@@ -33,8 +34,10 @@ export function currentStage(taskRuns: TaskRunRow[], liveTaskId: string | null):
 export type PendingQuestion = { key: string; label: string; ask: string | null; options: string[] | null };
 
 export type AudienceSummary = {
-  /** The name as a person would say it - without the "Demo:" prefix and run suffix AEP needs. */
+  /** Who the audience is - the middle of "CB | <title> | Sep 2026", or an older name cleaned up. */
   displayName: string;
+  /** When the name says it was built ("Sep 2026"); null for names from before the structure. */
+  period: string | null;
   /** The exact name in Adobe Experience Platform. */
   aepName: string;
   id: string;
@@ -44,7 +47,7 @@ export type AudienceSummary = {
   rule: string | null;
   environment: string;
   demo: boolean;
-  size: { text: string; counted: boolean };
+  size: SizeView;
   /** Evaluation job to poll while AEP is still counting. */
   pending: { jobId: string; segmentId: string; sandbox: string | null } | null;
   builtAt: string;
@@ -56,7 +59,7 @@ export type Outcome =
   | { kind: "approval"; next: string }
   | { kind: "success"; audience: AudienceSummary }
   /** A verified rule exists but nothing was created (Governed mode, or a draft-only run). */
-  | { kind: "defined"; interpretation: string | null; rule: string | null; note: string }
+  | { kind: "defined"; interpretation: string | null; rule: string | null; note: string; size: SizeView | null }
   | { kind: "not_built"; reason: string }
   | { kind: "failed"; reason: string };
 
@@ -79,18 +82,27 @@ type AudienceMeta = {
   mode?: string;
 };
 
-/** "Demo: Email + SEP Eligible · 53e13700" -> "Email + SEP Eligible". */
+/**
+ * "CB | SEP Eligible Without SEP | Sep 2026" -> "SEP Eligible Without SEP";
+ * an older "Demo: Email + SEP Eligible · 53e13700" -> "Email + SEP Eligible".
+ */
 export function displayName(aepName: string): string {
+  const structured = parseStructuredName(aepName);
+  if (structured) return structured.title;
   return aepName.replace(/^Demo:\s*/i, "").replace(/\s*·\s*[0-9a-f]{8}$/i, "").trim() || aepName;
 }
 
-/** A size an executive can read: a real count, or plainly when it will be known. Never a made-up number. */
-export function friendlySize(estimate: SegmentSizeEstimate | undefined): AudienceSummary["size"] {
-  if (!estimate) return { text: "Not yet available", counted: false };
-  if (estimate.available) return { text: `${estimate.count.toLocaleString()} profiles`, counted: true };
-  if (estimate.pending) return { text: "Counting now…", counted: false };
-  if (/scheduled evaluation/i.test(estimate.reason)) return { text: "Counted in tonight's evaluation", counted: false };
-  return { text: "Not yet available", counted: false };
+export type SizeView = { text: string; counted: boolean; estimated: boolean };
+
+/** A size an executive can read: a real count (estimated or AEP's own), or plainly when it will be known. Never a made-up number. */
+export function friendlySize(estimate: SegmentSizeEstimate | undefined): SizeView {
+  if (!estimate) return { text: "Not yet available", counted: false, estimated: false };
+  if (estimate.available) {
+    return { text: `${estimate.count.toLocaleString()} profiles`, counted: true, estimated: !!estimate.estimated };
+  }
+  if (estimate.pending) return { text: "Counting now…", counted: false, estimated: false };
+  if (/scheduled evaluation/i.test(estimate.reason)) return { text: "Counted in tonight's evaluation", counted: false, estimated: false };
+  return { text: "Not yet available", counted: false, estimated: false };
 }
 
 /** Why no audience was built, in plain words. The raw reason stays in Developer mode. */
@@ -146,6 +158,7 @@ export function outcomeOf(detail: RunDetail, liveTaskId: string | null = null): 
       kind: "success",
       audience: {
         displayName: displayName(aepName),
+        period: parseStructuredName(aepName)?.period ?? null,
         aepName,
         id: a.segmentId,
         reused: a.source !== "created",
@@ -169,6 +182,7 @@ export function outcomeOf(detail: RunDetail, liveTaskId: string | null = null): 
         meta.mode === "demo"
           ? "Defined and verified - not created, as this was a preview."
           : "Defined and verified. It will be created once the request is approved.",
+      size: out.sizeEstimate?.available ? friendlySize(out.sizeEstimate) : null,
     };
   }
 

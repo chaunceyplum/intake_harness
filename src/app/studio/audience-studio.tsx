@@ -319,7 +319,11 @@ export function AudienceStudio({ brandLogo = null }: { brandLogo?: string | null
                 tone="info"
                 title="Audience defined"
                 body={outcome.interpretation ?? "The audience's definition was written and verified."}
-                note={outcome.note}
+                note={
+                  outcome.size?.counted
+                    ? `Estimated size: ${outcome.size.text}. ${outcome.note}`
+                    : outcome.note
+                }
                 rule={developer ? outcome.rule : null}
               />
             )}
@@ -666,11 +670,27 @@ function SuccessCard({ audience, developer }: { audience: AudienceSummary; devel
         )}
       </div>
 
-      <h2 className="mt-5 text-[30px] font-semibold leading-tight tracking-tight text-label sm:text-[36px]">
+      {/* The name's structure, made visible: which business, who, when. */}
+      <div className="mt-5 flex flex-wrap items-center gap-2 text-[12px] font-semibold uppercase tracking-wider">
+        <span className="rounded-md bg-accent/12 px-2 py-0.5 text-accent-ink">Comcast Business</span>
+        {audience.period && <span className="rounded-md bg-label-tertiary/12 px-2 py-0.5 text-label-secondary">{audience.period}</span>}
+      </div>
+      <h2 className="mt-2 text-[30px] font-semibold leading-tight tracking-tight text-label sm:text-[36px]">
         {audience.displayName}
       </h2>
       {audience.interpretation && (
         <p className="mt-3 text-[17px] leading-relaxed text-label-secondary">{audience.interpretation}</p>
+      )}
+
+      {size.counted && (
+        <div className="mt-6 flex items-baseline gap-3">
+          <span className="text-[44px] font-bold leading-none tracking-tight text-label">
+            {size.text.replace(/ profiles$/, "")}
+          </span>
+          <span className="text-[15px] text-label-secondary">
+            {size.estimated ? "profiles, estimated just now" : "profiles"}
+          </span>
+        </div>
       )}
 
       <dl className="mt-7 grid grid-cols-1 gap-x-8 gap-y-5 border-t border-separator pt-6 sm:grid-cols-2">
@@ -680,7 +700,7 @@ function SuccessCard({ audience, developer }: { audience: AudienceSummary; devel
             {audience.reused ? "Already live, reused" : "Live in Adobe Experience Platform"}
           </span>
         </Detail>
-        <Detail label="Audience size">
+        <Detail label={size.estimated ? "Estimated size" : "Audience size"}>
           <span className={size.counted ? "font-semibold text-label" : undefined}>{size.text}</span>
         </Detail>
         <Detail label="Environment">{audience.environment}</Detail>

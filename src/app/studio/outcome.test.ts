@@ -36,7 +36,8 @@ describe("displayName", () => {
 
 describe("friendlySize", () => {
   it("shows a real count, and never invents one", () => {
-    expect(friendlySize({ available: true, count: 1234 })).toEqual({ text: "1,234 profiles", counted: true });
+    expect(friendlySize({ available: true, count: 1234 })).toEqual({ text: "1,234 profiles", counted: true, estimated: false });
+    expect(friendlySize({ available: true, count: 5, estimated: true }).estimated).toBe(true);
     expect(friendlySize({ available: false, reason: "this AEP org only counts audiences in its scheduled evaluation - size appears after that runs" }).text)
       .toBe("Counted in tonight's evaluation");
     expect(friendlySize({ available: false, reason: "x", pending: { jobId: "j", segmentId: "s", sandbox: null } }).text).toBe("Counting now…");

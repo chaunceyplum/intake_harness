@@ -869,6 +869,26 @@ export async function findSegmentWithRule(
   }
 }
 
+/**
+ * Every audience name already in the sandbox, so a new one gets a clear
+ * "(2)" rather than a clash (naming.ts). Empty when the list can't be read -
+ * AEP then rejects a true duplicate itself, and the rejection is reported.
+ */
+export async function segmentNames(taskId: TaskId, sandbox?: string): Promise<string[]> {
+  try {
+    const result = await callMcpTool<unknown>(taskId, "adobe_list_segments", {
+      limit: "200",
+      ...(sandbox ? { sandbox } : {}),
+    });
+    const rows = (Array.isArray(result) ? result : ((result as { segments?: unknown[] })?.segments || [])) as Array<
+      Record<string, unknown>
+    >;
+    return rows.map((r) => String(r.name ?? "")).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 /** A dataset's name/id, and whether Catalog metadata marks it profile-enabled. */
 function datasetRecords(result: unknown): Array<{ id: string; name: string; profileEnabled: boolean }> {
   const out: Array<{ id: string; name: string; profileEnabled: boolean }> = [];
@@ -1039,7 +1059,8 @@ export function nightlyCutoff(now = new Date()): {
 }
 
 export type SegmentSizeEstimate =
-  | { available: true; count: number }
+  /** `estimated`: counted over the dataset by Query Service (count.ts), not AEP's merged-profile evaluation. */
+  | { available: true; count: number; estimated?: boolean }
   | {
       available: false;
       reason: string;

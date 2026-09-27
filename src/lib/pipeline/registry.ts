@@ -211,6 +211,10 @@ export const PIPELINE: AgentDefinition[] = [
       // estimate tools above 404 on every segment.
       "adobe_create_segment_job",
       "adobe_get_segment_job",
+      // Estimated size in seconds over Query Service's PSQL endpoint
+      // (count.ts): this hands out the connection details. Its result
+      // carries a token and is withheld from the tool-call log.
+      "query_get_connection_parameters",
       // B4: check whether the attributes an audience needs already exist
       // in AEP before opening a GTO/attribute request.
       "adobe_list_schemas",

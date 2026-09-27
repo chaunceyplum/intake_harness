@@ -11,6 +11,7 @@ import {
   criteriaKeywords,
   estimateSegmentSize,
   findSegmentWithRule,
+  segmentNames,
   profileCatalog,
   type SegmentSizeEstimate,
 } from "@/lib/agents/audience/aep";
@@ -26,6 +27,8 @@ import {
 } from "@/lib/agents/audience/pql-synth";
 import type { AepContext } from "@/lib/agents/review/aep-context";
 import { filterAnswerNotes } from "@/lib/agents/intake/buildability";
+import { audienceTitle, uniqueStructuredName } from "@/lib/agents/audience/naming";
+import { estimateAudienceCount } from "@/lib/agents/audience/count";
 import type { SchemaProbe, SegmentMatch } from "@/lib/agents/audience/aep";
 import {
   findOpenRequest,
@@ -150,13 +153,14 @@ export interface AudienceCreationOutput {
   } | null;
 }
 
-/** "Demo: SEP-eligible profiles with email · 4f2a91c0" - readable in AEP, unique per run so a re-run never collides on name. */
-function audienceName(synthesis: PqlSynthesis, fields: Record<string, string>, runId: string, mode: "demo" | "governed"): string {
-  const base =
-    synthesis.suggestedName ||
-    [fields.campaign_name, fields.audience_description].filter(Boolean).map(String).join(" — ") ||
-    "Audience";
-  return `${mode === "demo" ? "Demo: " : ""}${base.slice(0, 80)} · ${String(runId || "").slice(0, 8)}`;
+/**
+ * "CB | SEP Eligible Without SEP | Sep 2026" - the structured name in
+ * naming.ts, unique in the sandbox without a random suffix. Demo vs.
+ * Governed is the sandbox's job, not the name's.
+ */
+function audienceName(synthesis: PqlSynthesis, fields: Record<string, string>, taken: string[]): string {
+  const fallback = [fields.campaign_name, fields.audience_description].filter(Boolean).map(String).join(" ");
+  return uniqueStructuredName(audienceTitle(synthesis.suggestedName, fallback), taken);
 }
 
 /** The one statusMessage line for whatever activateAudience decided - only ever called when activation was actually requested. */
@@ -412,9 +416,11 @@ async function handlePost(req: NextRequest) {
     const creationOn = segmentCreationEnabled(mode) && !draftOnly;
     let segmentCreation: SegmentCreation | null = null;
     let repairedAfterRejection = false;
+    const takenNames =
+      pqlSynthesis?.synthesized && !sameRule && creationOn ? await segmentNames("audience_creation", sandbox) : [];
     if (pqlSynthesis?.synthesized && !sameRule && creationOn) {
       segmentCreation = await createSegmentFromPql(
-        body.runId, "audience_creation", pqlSynthesis, audienceName(pqlSynthesis, fields, body.runId, mode), sandbox,
+        body.runId, "audience_creation", pqlSynthesis, audienceName(pqlSynthesis, fields, takenNames), sandbox,
       );
       if (segmentCreation.attempted && !segmentCreation.created && !isMissingWriteTool(segmentCreation.reason) && pqlGuidance) {
         const retry = await synthesizePql(criteria, probe, pqlGuidance, undefined, {
@@ -426,7 +432,7 @@ async function handlePost(req: NextRequest) {
           repairedAfterRejection = true;
           pqlSynthesis = retry;
           segmentCreation = await createSegmentFromPql(
-            body.runId, "audience_creation", retry, audienceName(retry, fields, body.runId, mode), sandbox,
+            body.runId, "audience_creation", retry, audienceName(retry, fields, takenNames), sandbox,
           );
         }
       }
@@ -499,9 +505,20 @@ async function handlePost(req: NextRequest) {
     // own segment (created, or the identical-rule match). A job usually takes
     // a few minutes, so this often comes back `pending` with the job id and
     // the audience card polls /api/audience-size until the count lands.
-    const sizeEstimate: SegmentSizeEstimate = audience
-      ? await estimateSegmentSize("audience_creation", audience.segmentId, sandbox)
-      : { available: false, reason: "no audience was created, so there is nothing to count yet" };
+    //
+    // First, an estimate in seconds from Query Service (count.ts) - for any
+    // verified rule, created or not, so a preview shows a size too. This org
+    // refuses on-demand evaluation jobs, so without it there is no number
+    // until the scheduled evaluation.
+    const quick: SegmentSizeEstimate | null =
+      pqlSynthesis?.synthesized && pqlSynthesis.pql
+        ? await estimateAudienceCount("audience_creation", audience?.pql ?? pqlSynthesis.pql, sandbox)
+        : null;
+    const sizeEstimate: SegmentSizeEstimate = quick?.available
+      ? quick
+      : audience
+        ? await estimateSegmentSize("audience_creation", audience.segmentId, sandbox)
+        : { available: false, reason: quick?.reason ?? "no audience was created, so there is nothing to count yet" };
 
     const statusMessage = [
       path.buildPath === "fac"
@@ -542,7 +559,7 @@ async function handlePost(req: NextRequest) {
           : "",
       audience
         ? sizeEstimate.available
-          ? `Audience size: ${sizeEstimate.count.toLocaleString()} profiles.`
+          ? `Audience size: ${sizeEstimate.count.toLocaleString()} profiles${sizeEstimate.estimated ? " (estimated via Query Service)" : ""}.`
           : `Size: ${sizeEstimate.reason}.`
         : "",
       attrState.note,

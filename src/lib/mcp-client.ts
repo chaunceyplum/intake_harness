@@ -386,7 +386,19 @@ export async function callMcpTool<T = unknown>(
   taskId: TaskId,
   name: string,
   args: Record<string, unknown> = {},
-  { timeoutMs = 30_000 }: { timeoutMs?: number } = {},
+  {
+    timeoutMs = 30_000,
+    secretResult = false,
+  }: {
+    timeoutMs?: number;
+    /**
+     * The response carries a credential (Query Service's connection token):
+     * the call is still traced - name, args, timing, success - but its result
+     * never reaches the run's stored tool-call log or the live feed, both of
+     * which Developer mode shows.
+     */
+    secretResult?: boolean;
+  } = {},
 ): Promise<T> {
   assertToolAllowed(taskId, name);
 
@@ -410,7 +422,9 @@ export async function callMcpTool<T = unknown>(
 
   try {
     const value = await callMcpToolInner<T>(name, args, timeoutMs);
-    const { json, truncated } = truncatedJson(value);
+    const { json, truncated } = secretResult
+      ? { json: "[withheld - contains credentials]", truncated: false }
+      : truncatedJson(value);
     record({ result: json, resultTruncated: truncated });
     if (ctx) {
       liveProgress.finishCall(ctx.runId, liveId, {
